@@ -1,0 +1,15 @@
+[project]
+name = "ionosphericscintillation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.11.0",
+    "numpy>=2.4.6",
+    "pandas>=3.0.3",
+    "pyqtgraph>=0.14.0",
+    "pyside6>=6.11.1",
+    "scipy>=1.17.1",
+    "ssqueezepy>=0.6.6",
+]
