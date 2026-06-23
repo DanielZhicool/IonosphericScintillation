@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import re
 
 def load_pm6_data(filepath):
     """Загрузка данных PM6 и конвертация времени (Excel Date)."""
@@ -12,28 +13,33 @@ def load_pm6_data(filepath):
 
 def parse_regi_with_time(filepath, pm6_start_dt):
     """
-    Умный парсер: читает лог-файл, учитывает переходы через полночь 
-    и сразу возвращает DataFrame с готовыми секундами (Start_sec, End_sec).
+    Умный парсер: читает лог-файл через RegEx (игнорируя опечатки), 
+    учитывает переходы через полночь и возвращает DataFrame с секундами.
     """
     events = []
+    
+    # Pattern: captures start (HH:MM), end in parentheses, and target name
+    log_pattern = re.compile(r'^(\d{1,2}:\d{2})\s*-?\s*\((\d{1,2}:\d{2})\).*?(\S+)$')
+
     with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
-            parts = line.strip().split()
-            if len(parts) >= 4 and parts[1] == '-':
-                try:
-                    events.append({
-                        'Start_Time': parts[0],
-                        'End_Time': parts[2].replace('(', '').replace(')', ''),
-                        'Target_Name': parts[-1]
-                    })
-                except IndexError:
-                    continue
-                    
+            line = line.strip()
+            if not line:
+                continue
+                
+            match = log_pattern.match(line)
+            if match:
+                events.append({
+                    'Start_Time': match.group(1),
+                    'End_Time': match.group(2),
+                    'Target_Name': match.group(3)
+                })
+
     df_logs = pd.DataFrame(events)
     if df_logs.empty:
         return df_logs
 
-    # Хронологический разбор времени
+    # Chronological time parsing
     current_date = pm6_start_dt.normalize()
     last_dt = pm6_start_dt
 
@@ -42,6 +48,7 @@ def parse_regi_with_time(filepath, pm6_start_dt):
         try:
             s_dt = pd.to_datetime(f"{current_date.date()} {row['Start_Time']}:00")
             
+            # Adjust for midnight rollover
             if s_dt.hour < last_dt.hour and (last_dt.hour - s_dt.hour) > 6:
                 current_date += pd.Timedelta(days=1)
                 s_dt += pd.Timedelta(days=1)
@@ -54,7 +61,7 @@ def parse_regi_with_time(filepath, pm6_start_dt):
             start_secs.append((s_dt - pm6_start_dt).total_seconds())
             end_secs.append((e_dt - pm6_start_dt).total_seconds())
             last_dt = s_dt 
-        except:
+        except Exception as e:
             start_secs.append(np.nan)
             end_secs.append(np.nan)
             
