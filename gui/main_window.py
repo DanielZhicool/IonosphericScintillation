@@ -7,108 +7,21 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QComboBox, QSplitter, QMessageBox, QTabWidget,
                                QSpinBox, QDoubleSpinBox, QCheckBox)
 from PySide6.QtCore import Qt
+from gui.constants import *
 
 # Core parsers and signal processing
 from core.parsers import load_pm6_data, parse_regi_with_time
 from core.signal_processing import (fill_gap_with_red_noise, bandpass_filter, 
                                     compute_fsst_spectrogram, clean_and_smooth_signal)
+from core.config import GAP_THRESHOLD
 
 CHANNELS = ['P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
 
 
 
 
-class TimeAxisItem(pg.AxisItem):
-    """Custom X axis: show absolute time (HH:MM:SS) instead of seconds."""
-    def __init__(self, start_datetime, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Store PM6 start time as timestamp (seconds since 1970)
-        self.start_timestamp = start_datetime.timestamp()
-
-    def tickStrings(self, values, scale, spacing):
-        strings = []
-        for v in values:
-            try:
-                # Add current seconds to start timestamp
-                dt = pd.to_datetime(self.start_timestamp + v, unit='s')
-                strings.append(dt.strftime('%H:%M:%S'))
-            except Exception:
-                strings.append("")  # Protection against out-of-range zoom errors
-        return strings
-
-
-
-
-class SignalTab(QWidget):
-    """Widget for a signal tab; holds a DataFrame for a target."""
-    def __init__(self, df_slice, start_datetime, tab_name="Полный обзор", fs=1.0):
-        super().__init__()
-        self.df_slice = df_slice.copy()
-        self.time_sec = self.df_slice['Time_sec'].values
-        self.fs = fs
-        self.start_datetime = start_datetime
-        self.tab_name = tab_name  # remember tab name
-        self.session_markers = []  # store session markers and labels
-        
-        self.current_channel = 'P1_20A'
-        self.raw_signal = self.df_slice[self.current_channel].values
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.graph_widget = pg.GraphicsLayoutWidget()
-        layout.addWidget(self.graph_widget)
-
-        # Raw data plot (tab name in title)
-        axis_p1 = TimeAxisItem(self.start_datetime, orientation='bottom')
-        self.p1 = self.graph_widget.addPlot(title=f"[{self.tab_name}] Сырые данные ({self.current_channel})", axisItems={'bottom': axis_p1})
-        self.p1.showGrid(x=True, y=True)
-        self.curve_raw = self.p1.plot(self.time_sec, self.raw_signal, pen='b')
-        
-        self.region = pg.LinearRegionItem()
-        region_end = min(self.time_sec[0] + 100, self.time_sec[-1])
-        self.region.setRegion([self.time_sec[0], region_end])
-        self.region.setZValue(10)
-        self.p1.addItem(self.region, ignoreBounds=True)
-
-        self.graph_widget.nextRow()
-        
-        # Ionospheric scintillations
-        axis_p2 = TimeAxisItem(self.start_datetime, orientation='bottom')
-        self.p2 = self.graph_widget.addPlot(title="Ионосферные мерцания", axisItems={'bottom': axis_p2})
-        self.p2.showGrid(x=True, y=True)
-        self.p2.setXLink(self.p1)
-        self.curve_filtered = self.p2.plot(pen='g')
-
-        self.graph_widget.nextRow()
-
-        # Spectrogram
-        axis_p3 = TimeAxisItem(self.start_datetime, orientation='bottom')
-        self.p3 = self.graph_widget.addPlot(title="FSST Спектрограмма", axisItems={'bottom': axis_p3})
-        self.p3.setXLink(self.p1)
-        self.img_spec = pg.ImageItem()
-        self.p3.addItem(self.img_spec)
-        self.img_spec.setColorMap(pg.colormap.get('viridis'))  # Use 'viridis' colormap
-
-    def set_channel(self, channel_name):
-        self.current_channel = channel_name
-        self.raw_signal = self.df_slice[channel_name].values
-        # Update title keeping tab name
-        self.p1.setTitle(f"[{self.tab_name}] Сырые данные ({channel_name})")
-        self.curve_raw.setData(self.time_sec, self.raw_signal)
-
-    def update_raw(self, df_updated):
-        self.df_slice = df_updated.copy()
-        self.set_channel(self.current_channel)
-
-    def update_filtered(self, filtered_signal):
-        self.curve_filtered.setData(self.time_sec, filtered_signal)
-
-    def update_spectrogram(self, img_data, lowcut, highcut):
-        self.img_spec.setImage(img_data, autoLevels=True)
-        # Map image to its real frequency range
-        freq_height = highcut - lowcut
-        self.img_spec.setRect(pg.QtCore.QRectF(self.time_sec[0], lowcut, self.time_sec[-1]-self.time_sec[0], freq_height))
-        self.p3.setYRange(lowcut, highcut)
+from gui.plotting import TimeAxisItem
+from gui.tabs import SignalTab
 
 
 class Uran4App(QMainWindow):
@@ -135,20 +48,20 @@ class Uran4App(QMainWindow):
         control_layout = QVBoxLayout(control_panel)
         
         # 1. Load data
-        self.btn_load_pm6 = QPushButton("1. Загрузить данные (PM6)")
+        self.btn_load_pm6 = QPushButton(BTN_LOAD_PM6)
         self.btn_load_pm6.clicked.connect(self.load_pm6)
-        self.lbl_status = QLabel("Файл PM6 не загружен")
+        self.lbl_status = QLabel(LBL_PM6_NOT_LOADED)
 
         self.combo_channel = QComboBox()
         self.combo_channel.addItems(CHANNELS)
         self.combo_channel.currentTextChanged.connect(self.change_active_channel)
         self.combo_channel.setEnabled(False)
 
-        self.btn_load_logs = QPushButton("2. Загрузить regi и создать вкладки")
+        self.btn_load_logs = QPushButton(BTN_LOAD_LOGS)
         self.btn_load_logs.clicked.connect(self.auto_clean_and_split)
         self.btn_load_logs.setEnabled(False)
 
-        self.check_markers = QCheckBox("Показывать разметку источников на главном графике")
+        self.check_markers = QCheckBox(CHECK_MARKERS)
         self.check_markers.setChecked(True)
         self.check_markers.stateChanged.connect(self.toggle_markers)
         self.check_markers.setEnabled(False)
@@ -168,24 +81,24 @@ class Uran4App(QMainWindow):
         self.spin_sigmas.valueChanged.connect(self.run_analysis)
         self.spin_sigmas.setEnabled(False)
 
-        self.check_smooth = QCheckBox("Включить сглаживание")
+        self.check_smooth = QCheckBox(CHECK_SMOOTH)
         self.check_smooth.setChecked(True)
         self.check_smooth.stateChanged.connect(self.run_analysis)
         self.check_smooth.setEnabled(False)
 
-        self.btn_apply_noise = QPushButton("3. Вырезать зону вручную")
+        self.btn_apply_noise = QPushButton(BTN_APPLY_NOISE)
         self.btn_apply_noise.clicked.connect(self.manual_clean_region)
         self.btn_apply_noise.setEnabled(False)
 
         self.combo_band = QComboBox()
-        self.combo_band.addItems(["Малые пузырьки (5 - 150 сек)", "Большие облака (150 - 600 сек)"])
+        self.combo_band.addItems(COMBO_BAND_ITEMS)
         self.combo_band.currentIndexChanged.connect(self.run_analysis)
 
-        self.btn_analyze = QPushButton("4. Принудительно обновить спектр")
+        self.btn_analyze = QPushButton(BTN_ANALYZE)
         self.btn_analyze.clicked.connect(self.run_analysis)
         self.btn_analyze.setEnabled(False)
         
-        self.btn_export = QPushButton("5. Экспорт графиков")
+        self.btn_export = QPushButton(BTN_EXPORT)
         self.btn_export.clicked.connect(self.export_plots)
         self.btn_export.setEnabled(False)
 
@@ -193,7 +106,7 @@ class Uran4App(QMainWindow):
         control_layout.addWidget(self.btn_load_pm6)
         control_layout.addWidget(self.lbl_status)
         control_layout.addSpacing(10)
-        control_layout.addWidget(QLabel("Отображаемый канал:"))
+        control_layout.addWidget(QLabel(LABEL_DISPLAY_CHANNEL))
         control_layout.addWidget(self.combo_channel)
         control_layout.addSpacing(10)
         control_layout.addWidget(self.btn_load_logs)
@@ -201,17 +114,17 @@ class Uran4App(QMainWindow):
         
         # Integrate cleaning controls
         control_layout.addSpacing(15)
-        control_layout.addWidget(QLabel("<b>Параметры очистки помех:</b>"))
-        control_layout.addWidget(QLabel("Размер окна фильтра (отсчеты):"))
+        control_layout.addWidget(QLabel(LABEL_CLEANING_HEADER))
+        control_layout.addWidget(QLabel(LABEL_WINDOW))
         control_layout.addWidget(self.spin_window)
-        control_layout.addWidget(QLabel("Порог отклонения (Сигма):"))
+        control_layout.addWidget(QLabel(LABEL_SIGMA))
         control_layout.addWidget(self.spin_sigmas)
         control_layout.addWidget(self.check_smooth)
         
         control_layout.addSpacing(15)
         control_layout.addWidget(self.btn_apply_noise)
         control_layout.addSpacing(10)
-        control_layout.addWidget(QLabel("Диапазон фильтрации:"))
+        control_layout.addWidget(QLabel(LABEL_BAND))
         control_layout.addWidget(self.combo_band)
         control_layout.addWidget(self.btn_analyze)
         control_layout.addSpacing(10)
@@ -305,10 +218,7 @@ class Uran4App(QMainWindow):
             unique_targets = df_logs[~df_logs['Target_Name'].isin(noise_targets)]['Target_Name'].unique()
             created_tabs, skipped_tabs = [], []
 
-            # Session gap threshold in seconds (3600 = 1 hour).
-            GAP_THRESHOLD = 3600 
-
-
+            # Session gap threshold in seconds (configured in core.config)
 
             for target in unique_targets:
                 target_events = df_logs[df_logs['Target_Name'] == target].sort_values('Start_sec')

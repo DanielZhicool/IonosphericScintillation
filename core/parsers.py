@@ -3,7 +3,7 @@ import numpy as np
 import re
 
 def load_pm6_data(filepath):
-    """Загрузка данных PM6 и конвертация времени (Excel Date)."""
+    """Load PM6 data and convert Excel date to datetime."""
     columns = ['MJD', 'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
                'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
     df = pd.read_csv(filepath, sep=r'\s+', names=columns, header=30, encoding_errors='ignore')
@@ -13,8 +13,8 @@ def load_pm6_data(filepath):
 
 def parse_regi_with_time(filepath, pm6_start_dt):
     """
-    Умный парсер: читает лог-файл через RegEx (игнорируя опечатки), 
-    учитывает переходы через полночь и возвращает DataFrame с секундами.
+    Robust parser: reads log file with regex, handles midnight rollovers,
+    and returns a DataFrame with times in seconds.
     """
     events = []
     

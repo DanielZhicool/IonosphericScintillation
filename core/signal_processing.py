@@ -4,10 +4,20 @@ from scipy.signal import butter, filtfilt, savgol_filter
 from scipy.signal.windows import tukey
 from ssqueezepy import ssq_stft
 
+from core.config import (
+    DEFAULT_WINDOW_SIZE,
+    DEFAULT_N_SIGMAS,
+    SAVGOL_POLYORDER,
+    DECIMATION_Q,
+    LOW_FREQ_HIGHCUT,
+    TUKEY_ALPHA,
+    NFFT_CAP,
+)
 
 
 
-def clean_and_smooth_signal(signal, window_size=15, n_sigmas=3.0, apply_smoothing=True):
+
+def clean_and_smooth_signal(signal, window_size=DEFAULT_WINDOW_SIZE, n_sigmas=DEFAULT_N_SIGMAS, apply_smoothing=True, polyorder=SAVGOL_POLYORDER):
     """
     Clean radio-astronomy signal:
     - Remove spikes/clusters (Hampel-like)
@@ -29,10 +39,10 @@ def clean_and_smooth_signal(signal, window_size=15, n_sigmas=3.0, apply_smoothin
     # MAD scaled to std (factor 1.4826)
     rolling_mad = 1.4826 * (s - rolling_median).abs().rolling(window=window_size, center=True).median()
     
-    # Находим точки, которые отклоняются от медианы больше, чем на n_sigmas
+    # Identify points deviating from median by more than n_sigmas
     outliers = (s - rolling_median).abs() > (n_sigmas * rolling_mad)
     
-    # Заменяем выбросы на локальную медиану (остальные точки не трогаем!)
+    # Replace outliers with local median (leave other points untouched)
     cleaned_s = s.copy()
     cleaned_s[outliers] = rolling_median[outliers]
     
@@ -40,13 +50,13 @@ def clean_and_smooth_signal(signal, window_size=15, n_sigmas=3.0, apply_smoothin
     cleaned_s = cleaned_s.bfill().ffill()
     cleaned_signal = cleaned_s.values
     
-    # --- ШАГ 2: Сглаживание (Savitzky-Golay) ---
+    # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
-        # Apply Savitzky-Golay smoothing (polyorder=2)
+        # Apply Savitzky-Golay smoothing
         smooth_window = window_size if window_size % 2 != 0 else window_size + 1
         if smooth_window > 3:
-            cleaned_signal = savgol_filter(cleaned_signal, window_length=smooth_window, polyorder=2)
-            
+            cleaned_signal = savgol_filter(cleaned_signal, window_length=smooth_window, polyorder=polyorder)
+
     return cleaned_signal
 
 
@@ -97,19 +107,18 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
 
 def compute_fsst_spectrogram(signal, fs, lowcut, highcut):
     """
-    Вычисляет FSST спектрограмму.
-    Для ультранизких частот применяется экстремальное ускорение через прореживание сигнала
-    и оконная функция Тьюки для подавления краевых эффектов.
+    Compute FSST spectrogram.
+    For ultra-low frequencies uses decimation and a Tukey window to reduce edge effects.
     """
     N = len(signal)
     if N == 0:
         return np.zeros((1, 1))
 
-    is_large_clouds = (highcut < 0.01)
+    is_large_clouds = (highcut < LOW_FREQ_HIGHCUT)
 
     if is_large_clouds:
-        # Прореживание (Downsampling)
-        q = 10
+        # Downsampling (decimation)
+        q = DECIMATION_Q
         if N > q * 4:  
             processing_signal = signal[::q]
             processing_fs = fs / q
@@ -117,8 +126,8 @@ def compute_fsst_spectrogram(signal, fs, lowcut, highcut):
             processing_signal = signal
             processing_fs = fs
 
-        # Apply Tukey window to suppress edge artifacts (alpha=0.1 => 5% taper)
-        window = tukey(len(processing_signal), alpha=0.1)
+        # Apply Tukey window to suppress edge artifacts (alpha=TUKEY_ALPHA)
+        window = tukey(len(processing_signal), alpha=TUKEY_ALPHA)
         processing_signal = processing_signal * window
         # --------------------------------------------------
 
@@ -131,19 +140,19 @@ def compute_fsst_spectrogram(signal, fs, lowcut, highcut):
         else:
             n_fft = base_n_fft 
             
-        n_fft = min(n_fft, 32768)
+        n_fft = min(n_fft, NFFT_CAP)
         Tx, _, freqs, _ = ssq_stft(processing_signal, fs=processing_fs, n_fft=n_fft)
     else:
-        # Для "Малых пузырьков" считаем все в исходном разрешении 1 Гц
+        # For "Small bubbles", compute at original sampling rate
         Tx, _, freqs, _ = ssq_stft(signal, fs=fs)
         
     Tx_abs = np.abs(Tx)
 
-    # Вырезаем нужный частотный диапазон
+    # Trim to requested frequency range
     valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
     
     if len(valid_idx) > 0:
         Tx_abs = Tx_abs[valid_idx, :]
     
-    # Транспонируем для правильной отрисовки в PyQtGraph
+    # Transpose for correct drawing in PyQtGraph
     return Tx_abs.T
