@@ -11,5 +11,6 @@ wheels/
 
 # Data
 data/
+Data/
 test_results/
 todo.md
