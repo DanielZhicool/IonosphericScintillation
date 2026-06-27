@@ -1,17 +1,16 @@
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt, savgol_filter
+from scipy.signal import butter, filtfilt, sosfiltfilt, savgol_filter, detrend
 from scipy.signal.windows import tukey
-from ssqueezepy import ssq_stft
+from scipy.interpolate import pchip_interpolate
+from scipy.ndimage import gaussian_filter
+from ssqueezepy import ssq_cwt  
 
 from core.config import (
     DEFAULT_WINDOW_SIZE,
     DEFAULT_N_SIGMAS,
     SAVGOL_POLYORDER,
-    DECIMATION_Q,
-    LOW_FREQ_HIGHCUT,
-    TUKEY_ALPHA,
-    NFFT_CAP,
+    TUKEY_ALPHA
 )
 
 
@@ -92,81 +91,95 @@ def fill_gap_with_red_noise(signal, start_idx, end_idx, context_window=50):
     return signal_cleaned
 
 
+def upsample_pchip(signal, fs, factor=3):
+    """
+    Увеличивает частоту дискретизации (апсемплинг) с использованием PCHIP интерполяции.
+    Сохраняет монотонность (в отличие от кубических сплайнов), 
+    предотвращая появление искусственных выбросов на резких скачках сигнала.
+    """
+    N = len(signal)
+    t = np.arange(N) / fs
+    
+    new_N = N * factor
+    t_new = np.linspace(t[0], t[-1], new_N)
+    
+    new_signal = pchip_interpolate(t, signal, t_new)
+    new_fs = fs * factor
+    
+    return new_signal, new_fs
+
 
 
 def bandpass_filter(data, lowcut, highcut, fs, order=4):
-    """Applies a Butterworth bandpass filter to the data."""
+    """
+    Стабильный полосовой фильтр с защитой от краевых эффектов.
+    """
+    # 1. Удаляем линейный тренд (спуск/подъем базовой линии)
+    data_detrended = detrend(data)
+    
+    # 2. Мягко сводим к нулю 5% по краям, чтобы избежать "удара" по фильтру
+    window = tukey(len(data_detrended), alpha=0.05)
+    data_ready = data_detrended * window
+    
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
-    b, a = butter(order, [low, high], btype='band')
-    return filtfilt(b, a, data)
+    
+    sos = butter(order, [low, high], btype='band', output='sos')
+    return sosfiltfilt(sos, data_ready)
 
 
 
 
-def compute_fsst_spectrogram(signal, fs, lowcut, highcut):
+def compute_cwt_spectrogram(signal, fs, lowcut, highcut):
     """
-    Compute FSST spectrogram.
-    For ultra-low frequencies uses decimation and a Tukey window to reduce edge effects.
+    Вычисляет спектрограмму с помощью Непрерывного вейвлет-преобразования (CWT)
+    на базе вейвлета Морзе (встроен в ssqueezepy).
+    Выполняется на секундном разрешении без прореживания.
     """
     N = len(signal)
     if N == 0:
         return np.zeros((1, 1))
 
-    is_large_clouds = (highcut < LOW_FREQ_HIGHCUT)
+    # Окно Тьюки для подавления краевых артефактов обрыва сигнала
+    window = tukey(N, alpha=TUKEY_ALPHA)
+    processing_signal = signal * window
 
-    if is_large_clouds:
-        # Downsampling (decimation)
-        q = DECIMATION_Q
-        if N > q * 4:  
-            processing_signal = signal[::q]
-            processing_fs = fs / q
-        else:
-            processing_signal = signal
-            processing_fs = fs
+    # Выполняем CWT. 
+    # Формируем ядро Морзе с параметрами из лога профессора:
+    # Gamma = 3, Time-Bandwidth (Beta) = 60
+    morse_wavelet = ('gmw', {'gamma': 3, 'beta': 60})
 
-        # Apply Tukey window to suppress edge artifacts (alpha=TUKEY_ALPHA)
-        window = tukey(len(processing_signal), alpha=TUKEY_ALPHA)
-        processing_signal = processing_signal * window
-        # --------------------------------------------------
+    # Выполняем Синхросквизинг (SWT) с 12 голосами на октаву (nv=12)
+    # Возвращает: Tw (Синхросквизинг), Wx (Обычный CWT), freqs
+    Tw, Wx, freqs, _ = ssq_cwt(
+        processing_signal, 
+        wavelet=morse_wavelet, 
+        nv=128, 
+        fs=fs
+    )
+    
+    # Берем матрицу Tw (Синхросквизинг / SWT) для отрисовки
+    Tw_abs = np.abs(Tw)
 
-        # Choose n_fft with zero-padding (capped later)
-        base_n_fft = int(2 ** np.ceil(np.log2(len(processing_signal))))
-        if base_n_fft <= 1024:
-            n_fft = base_n_fft * 8
-        elif base_n_fft <= 4096:
-            n_fft = base_n_fft * 4
-        else:
-            n_fft = base_n_fft 
-            
-        n_fft = min(n_fft, NFFT_CAP)
-        Tx, _, freqs, _ = ssq_stft(processing_signal, fs=processing_fs, n_fft=n_fft)
-    else:
-        # For "Small bubbles", compute at original sampling rate
-        Tx, _, freqs, _ = ssq_stft(signal, fs=fs)
-        
-    Tx_abs = np.abs(Tx)
-
-    # Trim to the requested frequency range
+    # 2. Имитируем движок отрисовки MATLAB (создаем тот самый эффект "посередине").
+    # Gaussian filter мягко сплавляет 1-пиксельные ступеньки между собой.
+    # sigma=(по вертикали, по горизонтали). 
+    # Размываем по частоте (вертикали) сильнее, чтобы "залечить" разорванные лесенки.
+    Wx_abs = gaussian_filter(Tw_abs, sigma=(2.5, 1.0))
+    
+    # Вырезаем запрошенный частотный диапазон
     valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
     
     if len(valid_idx) > 0:
-        Tx_abs = Tx_abs[valid_idx, :]
+        Wx_abs = Wx_abs[valid_idx, :]
         
-    # --- Visual Contrast Enhancement ---
+    # --- Визуальный контраст (Логарифмическая шкала) ---
+    Wx_abs = np.maximum(Wx_abs, 1e-12)
+    Wx_db = 20 * np.log10(Wx_abs)
     
-    # 1. Prevent log(0) calculation by setting a minimum threshold
-    Tx_abs = np.maximum(Tx_abs, 1e-12)
-    
-    # 2. Convert amplitude to a logarithmic scale (decibels)
-    Tx_db = 20 * np.log10(Tx_abs)
-    
-    # 3. Apply dynamic range clipping to suppress the noise floor
-    # Decrease dynamic_range (e.g., to 30.0) for less noise, increase for more details
     dynamic_range = 40.0
-    max_db = np.max(Tx_db)
-    Tx_contrast = np.clip(Tx_db, a_min=max_db - dynamic_range, a_max=max_db)
+    max_db = np.max(Wx_db)
+    Wx_contrast = np.clip(Wx_db, a_min=max_db - dynamic_range, a_max=max_db)
     
-    # Transpose for correct rendering in PyQtGraph
-    return Tx_contrast.T
+    return Wx_contrast.T

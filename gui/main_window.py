@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pyqtgraph as pg
 import pyqtgraph.exporters
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
@@ -27,7 +28,8 @@ from gui.constants import (
 # Core parsers and signal processing
 from core.parsers import load_pm6_data, parse_regi_with_time
 from core.signal_processing import (fill_gap_with_red_noise, bandpass_filter, 
-                                    compute_fsst_spectrogram, clean_and_smooth_signal)
+                                    compute_cwt_spectrogram, clean_and_smooth_signal,
+                                    upsample_pchip)
 
 CHANNELS = ['P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
 
@@ -150,7 +152,14 @@ class Uran4App(QMainWindow):
         splitter.setSizes([300, 1000])
 
     def get_active_tab(self):
-        return self.tabs.currentWidget()
+        current_widget = self.tabs.currentWidget()
+        if isinstance(current_widget, SignalTab):
+            # Это главная вкладка (Full overview)
+            return current_widget
+        elif isinstance(current_widget, QTabWidget):
+            # Это вкладка конкретного дня. Берем активный график внутри неё.
+            return current_widget.currentWidget()
+        return None
 
     def on_tab_changed(self, index):
         if index >= 0 and self.df_pm6 is not None:
@@ -208,11 +217,34 @@ class Uran4App(QMainWindow):
 
         try:
             pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
-            
             df_logs = parse_regi_with_time(filepath, pm6_start_dt)
+            
             if df_logs.empty:
                 QMessageBox.warning(self, MSG_NO_LOG_EVENTS_TITLE, MSG_NO_LOG_EVENTS_TEXT)
                 return
+
+            # --- 1. АСТРОФИЗИЧЕСКАЯ ПРОЕКЦИЯ (Звездные сутки) ---
+            # Звездные сутки = 23 часа 56 минут 4 секунды (86164 секунды).
+            # Радиоисточники смещаются ровно на это время каждый день относительно солнечного времени.
+            SIDEREAL_DAY = 86164
+            pm6_max_sec = self.full_time[-1]
+            
+            original_logs = df_logs.copy()
+            max_log_sec = original_logs['End_sec'].max()
+            
+            # Если PM6 длиннее лога, размножаем расписание на все дни вперед
+            if pm6_max_sec > max_log_sec:
+                days_to_add = int(np.ceil((pm6_max_sec - max_log_sec) / SIDEREAL_DAY))
+                projected_dfs = [original_logs]
+                
+                for day in range(1, days_to_add + 1):
+                    df_shifted = original_logs.copy()
+                    df_shifted['Start_sec'] += day * SIDEREAL_DAY
+                    df_shifted['End_sec'] += day * SIDEREAL_DAY
+                    projected_dfs.append(df_shifted)
+                    
+                df_logs = pd.concat(projected_dfs, ignore_index=True)
+            # ----------------------------------------------------
 
             noise_targets = ['calibrovka', '3Czenit']
             calibrations = df_logs[df_logs['Target_Name'].isin(noise_targets)]
@@ -224,7 +256,6 @@ class Uran4App(QMainWindow):
                     for col in CHANNELS:
                         self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, s_idx, e_idx)
 
-            # Update main tab with cleaned data
             main_tab = self.tabs.widget(0)
             main_tab.update_raw(self.df_pm6)
 
@@ -232,10 +263,7 @@ class Uran4App(QMainWindow):
                 main_tab.p1.removeItem(item)
             main_tab.session_markers.clear()
             
-            unique_targets = df_logs[~df_logs['Target_Name'].isin(noise_targets)]['Target_Name'].unique() # УДАЛИТЕ ИЛИ ЗАМЕНИТЕ ЭТУ СТРОКУ И ВСЁ ДО КОНЦА ЦИКЛА
-
-            # --- CHRONOLOGICAL SESSION LOGIC ---
-            # Filter out calibrations and sort all observations strictly by start time
+            # --- 2. СТРОГАЯ ХРОНОЛОГИЧЕСКАЯ ГРУППИРОВКА ---
             obs_logs = df_logs[~df_logs['Target_Name'].isin(noise_targets)].sort_values('Start_sec').reset_index(drop=True)
             
             sessions = []
@@ -246,57 +274,78 @@ class Uran4App(QMainWindow):
                 
                 for i in range(1, len(obs_logs)):
                     row = obs_logs.iloc[i]
-                    if row['Target_Name'] == current_target:
-                        # Same target repeating (e.g., three 3C461 in a row)
-                        # Keep the start, extend the end to the end of the current log
+                    is_same_session = (row['Target_Name'] == current_target) and (row['Start_sec'] - current_end < 3600)
+                    
+                    if is_same_session:
                         current_end = max(current_end, row['End_sec'])
                     else:
-                        # Target changed -> save the clean interval
                         sessions.append({'target': current_target, 'start': current_start, 'end': current_end})
-                        
-                        # Start tracking the new target
                         current_target = row['Target_Name']
                         current_start = row['Start_sec']
                         current_end = row['End_sec']
                         
-                # Save the last target after loop ends
                 sessions.append({'target': current_target, 'start': current_start, 'end': current_end})
 
-            # Count occurrences to append (1), (2), (3) correctly
-            target_totals = {}
+            # Удаляем старые вкладки дней при новой загрузке логов (оставляем только 0-й индекс "Full overview")
+            while self.tabs.count() > 1:
+                self.tabs.removeTab(1)
+
+            from collections import defaultdict
+            day_tab_widgets = {}
+            daily_target_counts = defaultdict(int)
+            current_daily_counters = defaultdict(int)
+            
+            # Предварительный подсчет для выявления дубликатов источников в один и тот же день
             for s in sessions:
-                target_totals[s['target']] = target_totals.get(s['target'], 0) + 1
-                
-            target_counters = {t: 0 for t in target_totals}
+                s_sec = s['start']
+                session_dt = pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
+                date_str = session_dt.strftime('%d %b')
+                daily_target_counts[(date_str, s['target'])] += 1
+
             created_tabs, skipped_tabs = [], []
 
-            # Create tabs for each formed segment
             for s in sessions:
                 target = s['target']
                 s_sec = s['start']
                 e_sec = s['end']
                 
-                target_counters[target] += 1
-                
-                # Find indices in PM6 array
                 s_idx = np.searchsorted(self.full_time, s_sec)
                 e_idx = np.searchsorted(self.full_time, e_sec)
                 
-                if s_idx < e_idx and s_idx < len(self.full_time) and e_idx > 0:
+                if s_idx < e_idx and s_idx < len(self.full_time) and (e_sec - s_sec) > 300:
                     df_slice = self.df_pm6.iloc[s_idx:e_idx].copy()
                     
-                    if target_totals[target] > 1:
-                        tab_name = f"{target} ({target_counters[target]})"
-                    else:
-                        tab_name = target
+                    # Получаем точную дату и время старта
+                    session_dt = pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
+                    date_str = session_dt.strftime('%d %b')  # Пример: "04 Jan"
+                    time_str = session_dt.strftime('%H:%M')  # Пример: "17:59"
+                    
+                    # Если вкладки для этого дня еще нет, создаем её
+                    if date_str not in day_tab_widgets:
+                        day_tw = QTabWidget()
+                        day_tw.currentChanged.connect(self.on_tab_changed) # Чтобы анализ обновлялся при клике
+                        self.tabs.addTab(day_tw, date_str)
+                        day_tab_widgets[date_str] = day_tw
                         
-                    target_tab = SignalTab(df_slice, pm6_start_dt, tab_name=tab_name, fs=self.fs)
-                    self.tabs.addTab(target_tab, tab_name)
-                    created_tabs.append(tab_name)
+                    current_daily_counters[(date_str, target)] += 1
+                    
+                    # Если источник наблюдался больше одного раза за сутки, добавляем уточнение (HH:MM)
+                    if daily_target_counts[(date_str, target)] > 1:
+                        inner_tab_name = f"{target} ({time_str})"
+                        marker_name = f"{target} ({date_str} {time_str})"
+                    else:
+                        inner_tab_name = target
+                        marker_name = f"{target} ({date_str})"
+                        
+                    # Создаем график и прячем его внутрь вкладки текущего дня
+                    target_tab = SignalTab(df_slice, pm6_start_dt, tab_name=marker_name, fs=self.fs)
+                    day_tab_widgets[date_str].addTab(target_tab, inner_tab_name)
+                    created_tabs.append(marker_name)
 
+                    # Рисуем зеленый маркер на "Full overview"
                     line = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
-                    text = pg.TextItem(tab_name, color=(0, 255, 0), anchor=(0.5, 0))
-                    text.setPos((s_sec + e_sec) / 2, -20) 
+                    text = pg.TextItem(marker_name, color=(0, 255, 0), anchor=(0.5, 0))
+                    text.setPos((s_sec + e_sec) / 2, -20)
                     
                     is_visible = self.check_markers.isChecked()
                     line.setVisible(is_visible)
@@ -378,6 +427,7 @@ class Uran4App(QMainWindow):
             n_sigmas = self.spin_sigmas.value()
             apply_smoothing = self.check_smooth.isChecked()
 
+            # 1. Очистка от спайков (Хампель + Савицкий-Голей)
             cleaned_sig = clean_and_smooth_signal(
                 active_tab.raw_signal,
                 window_size=window_size,
@@ -385,11 +435,34 @@ class Uran4App(QMainWindow):
                 apply_smoothing=apply_smoothing,
             )
             
-            filtered_sig = bandpass_filter(cleaned_sig, lowcut, highcut, self.fs)
-            active_tab.update_filtered(filtered_sig)
+            # --- НОВЫЙ БЛОК: PCHIP Апсемплинг (x3) ---
+            FACTOR = 3
+            upsampled_sig, new_fs = upsample_pchip(cleaned_sig, self.fs, factor=FACTOR)
             
-            img_data = compute_fsst_spectrogram(filtered_sig, self.fs, lowcut, highcut)
-            active_tab.update_spectrogram(img_data, lowcut, highcut)
+            # 2. Полосовая фильтрация на ВЫСОКОЙ частоте (new_fs)
+            filtered_sig = bandpass_filter(upsampled_sig, lowcut, highcut, new_fs)
+            
+            # Отдаем в 1D график прореженный обратно сигнал, 
+            # чтобы ось времени в интерфейсе не растянулась
+            active_tab.update_filtered(filtered_sig[::FACTOR])
+            
+            # 3. Вычисление CWT на ВЫСОКОЙ частоте (идеальная детализация фазы)
+            img_data = compute_cwt_spectrogram(filtered_sig, new_fs, lowcut, highcut)
+            
+            # --- Умное сжатие графики (Max Pooling) ---
+            # Вместо грубого среза [::FACTOR], который создает "пиксельные лесенки",
+            # мы берем максимум энергии в каждом окне из 3 точек. 
+            N_orig = len(active_tab.raw_signal)
+            
+            # Защита от ошибок размерности: берем ровно N_orig * FACTOR точек
+            img_data_exact = img_data[: N_orig * FACTOR, :]
+            
+            # Схлопываем (N_orig * 3) строк в N_orig строк, забирая максимальный пиксель
+            img_data_pooled = img_data_exact.reshape(N_orig, FACTOR, img_data_exact.shape[1]).max(axis=1)
+            
+            # Отдаем сжатую картинку в интерфейс
+            active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
+            # -----------------------------------------
             
         except Exception as e:
             QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{str(e)}")
