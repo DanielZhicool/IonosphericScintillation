@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import re
 
+from core.config import SIDEREAL_DAY
+
 def load_pm6_data(filepath):
     """Load PM6 data and convert Excel date to datetime."""
     columns = ['MJD', 'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
@@ -69,3 +71,61 @@ def parse_regi_with_time(filepath, pm6_start_dt):
     df_logs['End_sec'] = end_secs
     
     return df_logs.dropna()
+
+
+def build_observation_sessions(df_logs, pm6_max_sec):
+    """
+    Projects logs across sidereal days and groups them into contiguous sessions.
+    
+    Astrophysical Projection:
+    A sidereal day is 23 hours 56 minutes 4 seconds (86164 seconds).
+    Radio sources shift by exactly this amount every day relative to solar time.
+    If the PM6 file is longer than the log, we multiply the schedule forward.
+    
+    Returns: 
+        df_logs (DataFrame): Projected logs.
+        calibrations (DataFrame): Calibration blocks.
+        sessions (list): Chronological observation sessions.
+    """
+    original_logs = df_logs.copy()
+    max_log_sec = original_logs['End_sec'].max()
+    
+    if pm6_max_sec > max_log_sec:
+        days_to_add = int(np.ceil((pm6_max_sec - max_log_sec) / SIDEREAL_DAY))
+        projected_dfs = [original_logs]
+        
+        for day in range(1, days_to_add + 1):
+            df_shifted = original_logs.copy()
+            df_shifted['Start_sec'] += day * SIDEREAL_DAY
+            df_shifted['End_sec'] += day * SIDEREAL_DAY
+            projected_dfs.append(df_shifted)
+            
+        df_logs = pd.concat(projected_dfs, ignore_index=True)
+
+    noise_targets = ['calibrovka', '3Czenit']
+    calibrations = df_logs[df_logs['Target_Name'].isin(noise_targets)]
+    
+    # Strict chronological grouping
+    obs_logs = df_logs[~df_logs['Target_Name'].isin(noise_targets)].sort_values('Start_sec').reset_index(drop=True)
+    
+    sessions = []
+    if not obs_logs.empty:
+        current_target = obs_logs.iloc[0]['Target_Name']
+        current_start = obs_logs.iloc[0]['Start_sec']
+        current_end = obs_logs.iloc[0]['End_sec']
+        
+        for i in range(1, len(obs_logs)):
+            row = obs_logs.iloc[i]
+            is_same_session = (row['Target_Name'] == current_target) and (row['Start_sec'] - current_end < 3600)
+            
+            if is_same_session:
+                current_end = max(current_end, row['End_sec'])
+            else:
+                sessions.append({'target': current_target, 'start': current_start, 'end': current_end})
+                current_target = row['Target_Name']
+                current_start = row['Start_sec']
+                current_end = row['End_sec']
+                
+        sessions.append({'target': current_target, 'start': current_start, 'end': current_end})
+        
+    return df_logs, calibrations, sessions

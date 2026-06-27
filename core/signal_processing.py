@@ -10,10 +10,15 @@ from core.config import (
     DEFAULT_WINDOW_SIZE,
     DEFAULT_N_SIGMAS,
     SAVGOL_POLYORDER,
-    TUKEY_ALPHA
+    TUKEY_ALPHA,
+    PCHIP_FACTOR,
+    CWT_NV,
+    MORSE_GAMMA,
+    MORSE_BETA,
+    GAUSSIAN_SIGMA_FREQ,
+    GAUSSIAN_SIGMA_TIME,
+    CWT_DYNAMIC_RANGE_DB
 )
-
-
 
 
 def clean_and_smooth_signal(signal, window_size=DEFAULT_WINDOW_SIZE, n_sigmas=DEFAULT_N_SIGMAS, apply_smoothing=True, polyorder=SAVGOL_POLYORDER):
@@ -28,37 +33,26 @@ def clean_and_smooth_signal(signal, window_size=DEFAULT_WINDOW_SIZE, n_sigmas=DE
     n_sigmas (float): outlier threshold in sigma units
     apply_smoothing (bool): apply Savitzky-Golay smoothing
     """
-    # Convert to pandas Series for convenient rolling operations
     s = pd.Series(signal)
     
     # Step 1: Outlier detection (Hampel-like)
-    # Compute rolling median
     rolling_median = s.rolling(window=window_size, center=True).median()
-    
-    # MAD scaled to std (factor 1.4826)
     rolling_mad = 1.4826 * (s - rolling_median).abs().rolling(window=window_size, center=True).median()
-    
-    # Identify points deviating from median by more than n_sigmas
     outliers = (s - rolling_median).abs() > (n_sigmas * rolling_mad)
     
-    # Replace outliers with local median (leave other points untouched)
     cleaned_s = s.copy()
     cleaned_s[outliers] = rolling_median[outliers]
     
-    # Fill edge NaNs from rolling by backward/forward fill
     cleaned_s = cleaned_s.bfill().ffill()
     cleaned_signal = cleaned_s.values
     
     # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
-        # Apply Savitzky-Golay smoothing
         smooth_window = window_size if window_size % 2 != 0 else window_size + 1
         if smooth_window > 3:
             cleaned_signal = savgol_filter(cleaned_signal, window_length=smooth_window, polyorder=polyorder)
 
     return cleaned_signal
-
-
 
 
 def fill_gap_with_red_noise(signal, start_idx, end_idx, context_window=50):
@@ -91,11 +85,10 @@ def fill_gap_with_red_noise(signal, start_idx, end_idx, context_window=50):
     return signal_cleaned
 
 
-def upsample_pchip(signal, fs, factor=3):
+def upsample_pchip(signal, fs, factor=PCHIP_FACTOR):
     """
-    Увеличивает частоту дискретизации (апсемплинг) с использованием PCHIP интерполяции.
-    Сохраняет монотонность (в отличие от кубических сплайнов), 
-    предотвращая появление искусственных выбросов на резких скачках сигнала.
+    Increases the sampling rate (upsampling) using PCHIP interpolation.
+    Preserves monotonicity (unlike cubic splines), preventing artificial overshoots on sharp signal drops.
     """
     N = len(signal)
     t = np.arange(N) / fs
@@ -109,15 +102,14 @@ def upsample_pchip(signal, fs, factor=3):
     return new_signal, new_fs
 
 
-
 def bandpass_filter(data, lowcut, highcut, fs, order=4):
     """
-    Стабильный полосовой фильтр с защитой от краевых эффектов.
+    Stable bandpass filter with edge effect protection.
     """
-    # 1. Удаляем линейный тренд (спуск/подъем базовой линии)
+    # 1. Remove linear trend (baseline drift)
     data_detrended = detrend(data)
     
-    # 2. Мягко сводим к нулю 5% по краям, чтобы избежать "удара" по фильтру
+    # 2. Smoothly taper 5% at the edges to zero to avoid filter shock
     window = tukey(len(data_detrended), alpha=0.05)
     data_ready = data_detrended * window
     
@@ -129,57 +121,90 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     return sosfiltfilt(sos, data_ready)
 
 
-
-
 def compute_cwt_spectrogram(signal, fs, lowcut, highcut):
     """
-    Вычисляет спектрограмму с помощью Непрерывного вейвлет-преобразования (CWT)
-    на базе вейвлета Морзе (встроен в ssqueezepy).
-    Выполняется на секундном разрешении без прореживания.
+    Computes a spectrogram using Continuous Wavelet Transform (CWT)
+    based on the Morse wavelet (built into ssqueezepy).
+    Executes at 1-second resolution without decimation.
     """
     N = len(signal)
     if N == 0:
         return np.zeros((1, 1))
 
-    # Окно Тьюки для подавления краевых артефактов обрыва сигнала
+    # Tukey window to suppress edge artifacts from abrupt signal ends
     window = tukey(N, alpha=TUKEY_ALPHA)
     processing_signal = signal * window
 
-    # Выполняем CWT. 
-    # Формируем ядро Морзе с параметрами из лога профессора:
-    # Gamma = 3, Time-Bandwidth (Beta) = 60
-    morse_wavelet = ('gmw', {'gamma': 3, 'beta': 60})
+    # Setup Morse wavelet core with parameters from config
+    morse_wavelet = ('gmw', {'gamma': MORSE_GAMMA, 'beta': MORSE_BETA})
 
-    # Выполняем Синхросквизинг (SWT) с 12 голосами на октаву (nv=12)
-    # Возвращает: Tw (Синхросквизинг), Wx (Обычный CWT), freqs
+    # Perform Synchrosqueezing (SWT)
+    # Returns: Tw (Synchrosqueezing), Wx (Standard CWT), freqs
     Tw, Wx, freqs, _ = ssq_cwt(
         processing_signal, 
         wavelet=morse_wavelet, 
-        nv=128, 
+        nv=CWT_NV, 
         fs=fs
     )
     
-    # Берем матрицу Tw (Синхросквизинг / SWT) для отрисовки
+    # Use Tw matrix (Synchrosqueezing / SWT) for rendering
     Tw_abs = np.abs(Tw)
 
-    # 2. Имитируем движок отрисовки MATLAB (создаем тот самый эффект "посередине").
-    # Gaussian filter мягко сплавляет 1-пиксельные ступеньки между собой.
-    # sigma=(по вертикали, по горизонтали). 
-    # Размываем по частоте (вертикали) сильнее, чтобы "залечить" разорванные лесенки.
-    Wx_abs = gaussian_filter(Tw_abs, sigma=(2.5, 1.0))
+    # Gaussian filter smoothly blends pixels vertically to heal broken lines
+    Wx_abs = gaussian_filter(Tw_abs, sigma=(GAUSSIAN_SIGMA_FREQ, GAUSSIAN_SIGMA_TIME))
     
-    # Вырезаем запрошенный частотный диапазон
+    # Extract requested frequency range
     valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
     
     if len(valid_idx) > 0:
         Wx_abs = Wx_abs[valid_idx, :]
         
-    # --- Визуальный контраст (Логарифмическая шкала) ---
+    # Apply Visual Contrast (Logarithmic Scale)
     Wx_abs = np.maximum(Wx_abs, 1e-12)
     Wx_db = 20 * np.log10(Wx_abs)
     
-    dynamic_range = 40.0
     max_db = np.max(Wx_db)
-    Wx_contrast = np.clip(Wx_db, a_min=max_db - dynamic_range, a_max=max_db)
+    Wx_contrast = np.clip(Wx_db, a_min=max_db - CWT_DYNAMIC_RANGE_DB, a_max=max_db)
     
     return Wx_contrast.T
+
+
+def process_signal_pipeline(raw_signal, fs, lowcut, highcut, window_size, n_sigmas, apply_smoothing):
+    """
+    Full processing pipeline for the UI:
+    1. Clean and smooth
+    2. Upsample
+    3. Bandpass filter
+    4. Compute CWT spectrogram
+    5. Max pooling for UI performance
+    """
+    # 1. Remove spikes (Hampel + Savitzky-Golay)
+    cleaned_sig = clean_and_smooth_signal(
+        raw_signal,
+        window_size=window_size,
+        n_sigmas=n_sigmas,
+        apply_smoothing=apply_smoothing,
+    )
+    
+    # 2. PCHIP Upsampling
+    upsampled_sig, new_fs = upsample_pchip(cleaned_sig, fs, factor=PCHIP_FACTOR)
+    
+    # 3. Bandpass filtering at HIGH frequency (new_fs)
+    filtered_sig = bandpass_filter(upsampled_sig, lowcut, highcut, new_fs)
+    
+    # Downsample back for 1D plot so time axis in UI doesn't stretch
+    filtered_sig_downsampled = filtered_sig[::PCHIP_FACTOR]
+    
+    # 4. Compute CWT at HIGH frequency (perfect phase detail)
+    img_data = compute_cwt_spectrogram(filtered_sig, new_fs, lowcut, highcut)
+    
+    # 5. Smart image compression (Max Pooling)
+    N_orig = len(raw_signal)
+    
+    # Protect against dimension errors: take exactly N_orig * PCHIP_FACTOR points
+    img_data_exact = img_data[: N_orig * PCHIP_FACTOR, :]
+    
+    # Collapse (N_orig * PCHIP_FACTOR) rows into N_orig rows, taking the maximum pixel
+    img_data_pooled = img_data_exact.reshape(N_orig, PCHIP_FACTOR, img_data_exact.shape[1]).max(axis=1)
+    
+    return filtered_sig_downsampled, img_data_pooled
