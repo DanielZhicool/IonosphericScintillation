@@ -148,11 +148,25 @@ def compute_fsst_spectrogram(signal, fs, lowcut, highcut):
         
     Tx_abs = np.abs(Tx)
 
-    # Trim to requested frequency range
+    # Trim to the requested frequency range
     valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
     
     if len(valid_idx) > 0:
         Tx_abs = Tx_abs[valid_idx, :]
+        
+    # --- Visual Contrast Enhancement ---
     
-    # Transpose for correct drawing in PyQtGraph
-    return Tx_abs.T
+    # 1. Prevent log(0) calculation by setting a minimum threshold
+    Tx_abs = np.maximum(Tx_abs, 1e-12)
+    
+    # 2. Convert amplitude to a logarithmic scale (decibels)
+    Tx_db = 20 * np.log10(Tx_abs)
+    
+    # 3. Apply dynamic range clipping to suppress the noise floor
+    # Decrease dynamic_range (e.g., to 30.0) for less noise, increase for more details
+    dynamic_range = 40.0
+    max_db = np.max(Tx_db)
+    Tx_contrast = np.clip(Tx_db, a_min=max_db - dynamic_range, a_max=max_db)
+    
+    # Transpose for correct rendering in PyQtGraph
+    return Tx_contrast.T

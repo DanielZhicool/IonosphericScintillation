@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import pyqtgraph as pg
 import pyqtgraph.exporters
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
@@ -7,18 +6,30 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                                QComboBox, QSplitter, QMessageBox, QTabWidget,
                                QSpinBox, QDoubleSpinBox, QCheckBox)
 from PySide6.QtCore import Qt
-from gui.constants import *
+from gui.constants import (
+    APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
+    CHECK_MARKERS, CHECK_SMOOTH, COMBO_BAND_ITEMS, FILTER_PM6,
+    FILTER_TEXT_FILES, LABEL_BAND, LABEL_CLEANING_HEADER,
+    LABEL_DISPLAY_CHANNEL, LABEL_SIGMA, LABEL_WINDOW,
+    LBL_LOADED_SAMPLES, LBL_PM6_NOT_LOADED, MAIN_TAB_NAME,
+    MSG_ANALYSIS_DATA_TOO_SHORT_TEXT,
+    MSG_ANALYSIS_DATA_TOO_SHORT_TITLE, MSG_ANALYSIS_ERROR_TITLE,
+    MSG_LOG_PROCESSING_ERROR_TITLE, MSG_LOG_PROCESSING_RESULT_TITLE,
+    MSG_NO_LOG_EVENTS_TEXT, MSG_NO_LOG_EVENTS_TITLE,
+    MSG_NO_PM6_SELECTED_TEXT, MSG_NO_PM6_SELECTED_TITLE,
+    MSG_OPEN_ERROR_TITLE, MSG_SAVE_ERROR_TITLE,
+    MSG_SKIPPED_TABS_TEMPLATE, MSG_TAB_CREATION_NONE,
+    FILE_DIALOG_PM6_TITLE, FILE_DIALOG_REGI_TITLE,
+    SAVE_FILE_DEFAULT_NAME, SAVE_FILE_FILTER,
+    MSG_CREATED_TABS_TEMPLATE
+)
 
 # Core parsers and signal processing
 from core.parsers import load_pm6_data, parse_regi_with_time
 from core.signal_processing import (fill_gap_with_red_noise, bandpass_filter, 
                                     compute_fsst_spectrogram, clean_and_smooth_signal)
-from core.config import GAP_THRESHOLD
 
 CHANNELS = ['P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
-
-
-
 
 from gui.plotting import TimeAxisItem
 from gui.tabs import SignalTab
@@ -28,7 +39,7 @@ class Uran4App(QMainWindow):
     """Main application window."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("URAN-4 Ionospheric Scintillation Analyzer")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1300, 850)
         self.fs = 1.0 
         
@@ -152,7 +163,7 @@ class Uran4App(QMainWindow):
             self.run_analysis()
 
     def set_widgets_enabled(self, enabled=True):
-        """Включение/выключение блоков настройки параметров."""
+        """Enable or disable the cleaning and export controls."""
         self.combo_channel.setEnabled(enabled)
         self.btn_load_logs.setEnabled(enabled)
         self.check_markers.setEnabled(enabled)
@@ -164,37 +175,43 @@ class Uran4App(QMainWindow):
         self.check_smooth.setEnabled(enabled)
 
     def load_pm6(self):
-        filepath, _ = QFileDialog.getOpenFileName(self, "Открыть PM6", "", "PM6 Files (*.PM6);;All Files (*)")
-        if not filepath: return
+        filepath, _ = QFileDialog.getOpenFileName(self, FILE_DIALOG_PM6_TITLE, "", FILTER_PM6)
+        if not filepath:
+            return
             
         try:
             self.df_pm6 = load_pm6_data(filepath)
             self.full_time = self.df_pm6['Time_sec'].values
             
-            # Extract exact pm6 start datetime
+            # Extract exact PM6 start datetime
             pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
             
             self.tabs.clear()
             # Pass pm6_start_dt into the tab
-            main_tab = SignalTab(self.df_pm6, pm6_start_dt, tab_name="Полный обзор", fs=self.fs)
-            self.tabs.addTab(main_tab, "Полный обзор")
+            main_tab = SignalTab(self.df_pm6, pm6_start_dt, tab_name=MAIN_TAB_NAME, fs=self.fs)
+            self.tabs.addTab(main_tab, MAIN_TAB_NAME)
             
-            self.lbl_status.setText(f"Загружено отсчетов: {len(self.df_pm6)}")
+            self.lbl_status.setText(LBL_LOADED_SAMPLES.format(len(self.df_pm6)))
             self.set_widgets_enabled(True)
             self.run_analysis()
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка загрузки", str(e))
+            QMessageBox.critical(self, MSG_OPEN_ERROR_TITLE, str(e))
 
     def auto_clean_and_split(self):
-        filepath, _ = QFileDialog.getOpenFileName(self, "Открыть regi лог", "", "Text Files (*.txt);;All Files (*)")
-        if not filepath: return
+        if self.df_pm6 is None:
+            QMessageBox.warning(self, MSG_NO_PM6_SELECTED_TITLE, MSG_NO_PM6_SELECTED_TEXT)
+            return
+
+        filepath, _ = QFileDialog.getOpenFileName(self, FILE_DIALOG_REGI_TITLE, "", FILTER_TEXT_FILES)
+        if not filepath:
+            return
 
         try:
             pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
             
-            df_logs = parse_regi_with_time(filepath, self.df_pm6['Datetime'].iloc[0])
+            df_logs = parse_regi_with_time(filepath, pm6_start_dt)
             if df_logs.empty:
-                QMessageBox.warning(self, "Пустой файл", "Не удалось найти события в файле.")
+                QMessageBox.warning(self, MSG_NO_LOG_EVENTS_TITLE, MSG_NO_LOG_EVENTS_TEXT)
                 return
 
             noise_targets = ['calibrovka', '3Czenit']
@@ -215,71 +232,96 @@ class Uran4App(QMainWindow):
                 main_tab.p1.removeItem(item)
             main_tab.session_markers.clear()
             
-            unique_targets = df_logs[~df_logs['Target_Name'].isin(noise_targets)]['Target_Name'].unique()
+            unique_targets = df_logs[~df_logs['Target_Name'].isin(noise_targets)]['Target_Name'].unique() # УДАЛИТЕ ИЛИ ЗАМЕНИТЕ ЭТУ СТРОКУ И ВСЁ ДО КОНЦА ЦИКЛА
+
+            # --- CHRONOLOGICAL SESSION LOGIC ---
+            # Filter out calibrations and sort all observations strictly by start time
+            obs_logs = df_logs[~df_logs['Target_Name'].isin(noise_targets)].sort_values('Start_sec').reset_index(drop=True)
+            
+            sessions = []
+            if not obs_logs.empty:
+                current_target = obs_logs.iloc[0]['Target_Name']
+                current_start = obs_logs.iloc[0]['Start_sec']
+                current_end = obs_logs.iloc[0]['End_sec']
+                
+                for i in range(1, len(obs_logs)):
+                    row = obs_logs.iloc[i]
+                    if row['Target_Name'] == current_target:
+                        # Same target repeating (e.g., three 3C461 in a row)
+                        # Keep the start, extend the end to the end of the current log
+                        current_end = max(current_end, row['End_sec'])
+                    else:
+                        # Target changed -> save the clean interval
+                        sessions.append({'target': current_target, 'start': current_start, 'end': current_end})
+                        
+                        # Start tracking the new target
+                        current_target = row['Target_Name']
+                        current_start = row['Start_sec']
+                        current_end = row['End_sec']
+                        
+                # Save the last target after loop ends
+                sessions.append({'target': current_target, 'start': current_start, 'end': current_end})
+
+            # Count occurrences to append (1), (2), (3) correctly
+            target_totals = {}
+            for s in sessions:
+                target_totals[s['target']] = target_totals.get(s['target'], 0) + 1
+                
+            target_counters = {t: 0 for t in target_totals}
             created_tabs, skipped_tabs = [], []
 
-            # Session gap threshold in seconds (configured in core.config)
-
-            for target in unique_targets:
-                target_events = df_logs[df_logs['Target_Name'] == target].sort_values('Start_sec')
-                if target_events.empty: continue
+            # Create tabs for each formed segment
+            for s in sessions:
+                target = s['target']
+                s_sec = s['start']
+                e_sec = s['end']
                 
-                sessions = []
-                current_start = target_events.iloc[0]['Start_sec']
-                current_end = target_events.iloc[0]['End_sec']
-
-                for i in range(1, len(target_events)):
-                    row = target_events.iloc[i]
-                    if row['Start_sec'] - current_end > GAP_THRESHOLD:
-                        sessions.append((current_start, current_end))
-                        current_start = row['Start_sec']
-                    current_end = row['End_sec']
-                sessions.append((current_start, current_end))
-
-                for idx, (s_sec, e_sec) in enumerate(sessions):
-                    s_idx = np.searchsorted(self.full_time, s_sec)
-                    e_idx = np.searchsorted(self.full_time, e_sec)
+                target_counters[target] += 1
+                
+                # Find indices in PM6 array
+                s_idx = np.searchsorted(self.full_time, s_sec)
+                e_idx = np.searchsorted(self.full_time, e_sec)
+                
+                if s_idx < e_idx and s_idx < len(self.full_time) and e_idx > 0:
+                    df_slice = self.df_pm6.iloc[s_idx:e_idx].copy()
                     
-                    if s_idx < e_idx and s_idx < len(self.full_time) and e_idx > 0:
-                        df_slice = self.df_pm6.iloc[s_idx:e_idx].copy()
-                        tab_name = f"{target} ({idx+1})" if len(sessions) > 1 else target
-                        
-                        # Передаем tab_name во вкладку
-                        target_tab = SignalTab(df_slice, pm6_start_dt, tab_name=tab_name, fs=self.fs)
-                        self.tabs.addTab(target_tab, tab_name)
-                        created_tabs.append(tab_name)
-
-                        # Рисуем разметку на главном графике
-                        line = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
-                        text = pg.TextItem(tab_name, color=(0, 255, 0), anchor=(0.5, 0))
-                        text.setPos((s_sec + e_sec) / 2, -20) 
-                        
-                        # Учитываем текущее состояние чекбокса
-                        is_visible = self.check_markers.isChecked()
-                        line.setVisible(is_visible)
-                        text.setVisible(is_visible)
-
-                        main_tab.p1.addItem(line)
-                        main_tab.p1.addItem(text)
-                        
-                        # Сохраняем в список вкладки для управления видимостью
-                        main_tab.session_markers.extend([line, text])
+                    if target_totals[target] > 1:
+                        tab_name = f"{target} ({target_counters[target]})"
                     else:
-                        skipped_tabs.append(f"{target} (Сессия {idx+1})")
+                        tab_name = target
+                        
+                    target_tab = SignalTab(df_slice, pm6_start_dt, tab_name=tab_name, fs=self.fs)
+                    self.tabs.addTab(target_tab, tab_name)
+                    created_tabs.append(tab_name)
+
+                    line = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
+                    text = pg.TextItem(tab_name, color=(0, 255, 0), anchor=(0.5, 0))
+                    text.setPos((s_sec + e_sec) / 2, -20) 
+                    
+                    is_visible = self.check_markers.isChecked()
+                    line.setVisible(is_visible)
+                    text.setVisible(is_visible)
+
+                    main_tab.p1.addItem(line)
+                    main_tab.p1.addItem(text)
+                    main_tab.session_markers.extend([line, text])
+                else:
+                    skipped_tabs.append(f"{target} ({s_sec:.0f}s - {e_sec:.0f}s)")
 
             self.change_active_channel(self.combo_channel.currentText())
             
-            report_msg = f"✅ Созданы вкладки: {', '.join(created_tabs) if created_tabs else 'Нет'}\n\n"
+            report_msg = MSG_CREATED_TABS_TEMPLATE.format(', '.join(created_tabs) if created_tabs else MSG_TAB_CREATION_NONE)
             if skipped_tabs:
-                report_msg += f"⚠️ Пропущены (нет данных в PM6):\n{', '.join(skipped_tabs)}"
-            QMessageBox.information(self, "Результат", report_msg)
+                report_msg += "\n\n" + MSG_SKIPPED_TABS_TEMPLATE.format(', '.join(skipped_tabs))
+
+            QMessageBox.information(self, MSG_LOG_PROCESSING_RESULT_TITLE, report_msg)
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось обработать лог: {str(e)}")
+            QMessageBox.critical(self, MSG_LOG_PROCESSING_ERROR_TITLE, f"Failed to process log: {str(e)}")
 
 
     def toggle_markers(self):
-        """Включает и выключает видимость зеленых линий на главной вкладке."""
+        """Toggle the visibility of session markers on the main plot."""
         if self.tabs.count() > 0:
             main_tab = self.tabs.widget(0)
             is_visible = self.check_markers.isChecked()
@@ -304,69 +346,63 @@ class Uran4App(QMainWindow):
             self.run_analysis()
 
     def run_analysis(self):
-        """Запуск сквозного конвейера: Очистка параметров -> Полосовой фильтр -> FSST."""
+        """Run the signal processing pipeline: cleaning -> bandpass -> FSST."""
         active_tab = self.get_active_tab()
-        if not active_tab: return
+        if not active_tab:
+            return
         
-        if active_tab.tab_name == "Полный обзор":
+        if active_tab.tab_name == MAIN_TAB_NAME:
             return
         
         idx = self.combo_band.currentIndex()
         if idx == 0:
-            lowcut, highcut = 1.0/150.0, 1.0/5.0
+            lowcut, highcut = 1.0 / 150.0, 1.0 / 5.0
         else:
-            lowcut, highcut = 1.0/600.0, 1.0/150.0
+            lowcut, highcut = 1.0 / 600.0, 1.0 / 150.0
         
         signal_duration_sec = len(active_tab.raw_signal) / self.fs
         
-        # If 'Large clouds' selected but signal < 600s (10 min)
         if idx == 1 and signal_duration_sec < 600:
-            QMessageBox.warning(self, "Недостаточно данных", 
-                              f"Длина сигнала ({int(signal_duration_sec)} сек) слишком мала "
-                              "для поиска Больших облаков (волн до 600 сек).\n\n"
-                              "Результаты анализа будут содержать сильные краевые артефакты. "
-                              "Для коротких наблюдений используйте режим 'Малые пузырьки'.")
-            return # Прерываем расчет, чтобы не рисовать пиксельный мусор
+            QMessageBox.warning(
+                self,
+                MSG_ANALYSIS_DATA_TOO_SHORT_TITLE,
+                MSG_ANALYSIS_DATA_TOO_SHORT_TEXT,
+            )
+            return
         
         try:
-            # Read dynamic parameters from GUI
             window_size = self.spin_window.value()
-            # Гарантируем нечетное число для корректной работы фильтра Савицкого-Голея
             if window_size % 2 == 0:
                 window_size += 1
                 
             n_sigmas = self.spin_sigmas.value()
             apply_smoothing = self.check_smooth.isChecked()
 
-            # Step 1: Clean spikes and clusters
             cleaned_sig = clean_and_smooth_signal(
-                active_tab.raw_signal, 
-                window_size=window_size, 
-                n_sigmas=n_sigmas, 
-                apply_smoothing=apply_smoothing
+                active_tab.raw_signal,
+                window_size=window_size,
+                n_sigmas=n_sigmas,
+                apply_smoothing=apply_smoothing,
             )
             
-            # Step 2: Bandpass filter the cleaned signal
             filtered_sig = bandpass_filter(cleaned_sig, lowcut, highcut, self.fs)
             active_tab.update_filtered(filtered_sig)
             
-            # Step 3: Compute synchrosqueezed spectrogram (lowcut/highcut added)
             img_data = compute_fsst_spectrogram(filtered_sig, self.fs, lowcut, highcut)
             active_tab.update_spectrogram(img_data, lowcut, highcut)
             
         except Exception as e:
-            # Note: now shows an error dialog instead of a blank screen on failure
-            QMessageBox.critical(self, "Ошибка анализа", f"Сбой при построении графиков:\n{str(e)}")
+            QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{str(e)}")
 
     def export_plots(self):
         active_tab = self.get_active_tab()
         if not active_tab: return
 
-        filepath, _ = QFileDialog.getSaveFileName(self, "Сохранить", "graph.png", "PNG (*.png)")
+        filepath, _ = QFileDialog.getSaveFileName(self, "Export Plot", SAVE_FILE_DEFAULT_NAME, SAVE_FILE_FILTER)
         if filepath:
             try:
                 exporter = pg.exporters.ImageExporter(active_tab.graph_widget.scene())
                 exporter.parameters()['width'] = 1920
                 exporter.export(filepath)
             except Exception as e:
-                QMessageBox.critical(self, "Ошибка", str(e))
+                QMessageBox.critical(self, MSG_SAVE_ERROR_TITLE, str(e))

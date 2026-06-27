@@ -2,11 +2,12 @@ import pyqtgraph as pg
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import QRectF
 
+from gui.constants import MAIN_TAB_NAME, RAW_DATA_TITLE_TEMPLATE, IONOSPHERIC_TITLE, SPECTROGRAM_TITLE
 from gui.plotting import TimeAxisItem
 
 class SignalTab(QWidget):
     """Widget for a signal tab; holds a DataFrame for a target."""
-    def __init__(self, df_slice, start_datetime, tab_name="Полный обзор", fs=1.0):
+    def __init__(self, df_slice, start_datetime, tab_name=MAIN_TAB_NAME, fs=1.0):
         super().__init__()
         self.df_slice = df_slice.copy()
         self.time_sec = self.df_slice['Time_sec'].values
@@ -25,7 +26,7 @@ class SignalTab(QWidget):
 
         # Raw data plot (tab name in title)
         axis_p1 = TimeAxisItem(self.start_datetime, orientation='bottom')
-        self.p1 = self.graph_widget.addPlot(title=f"[{self.tab_name}] Сырые данные ({self.current_channel})", axisItems={'bottom': axis_p1})
+        self.p1 = self.graph_widget.addPlot(title=RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=self.current_channel), axisItems={'bottom': axis_p1})
         self.p1.showGrid(x=True, y=True)
         self.curve_raw = self.p1.plot(self.time_sec, self.raw_signal, pen='b')
         
@@ -39,7 +40,7 @@ class SignalTab(QWidget):
         
         # Ionospheric scintillations
         axis_p2 = TimeAxisItem(self.start_datetime, orientation='bottom')
-        self.p2 = self.graph_widget.addPlot(title="Ионосферные мерцания", axisItems={'bottom': axis_p2})
+        self.p2 = self.graph_widget.addPlot(title=IONOSPHERIC_TITLE, axisItems={'bottom': axis_p2})
         self.p2.showGrid(x=True, y=True)
         self.p2.setXLink(self.p1)
         self.curve_filtered = self.p2.plot(pen='g')
@@ -48,7 +49,7 @@ class SignalTab(QWidget):
 
         # Spectrogram
         axis_p3 = TimeAxisItem(self.start_datetime, orientation='bottom')
-        self.p3 = self.graph_widget.addPlot(title="FSST Спектрограмма", axisItems={'bottom': axis_p3})
+        self.p3 = self.graph_widget.addPlot(title=SPECTROGRAM_TITLE, axisItems={'bottom': axis_p3})
         self.p3.setXLink(self.p1)
         self.img_spec = pg.ImageItem()
         self.p3.addItem(self.img_spec)
@@ -58,7 +59,7 @@ class SignalTab(QWidget):
         self.current_channel = channel_name
         self.raw_signal = self.df_slice[channel_name].values
         # Update title keeping tab name
-        self.p1.setTitle(f"[{self.tab_name}] Сырые данные ({channel_name})")
+        self.p1.setTitle(RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=channel_name))
         self.curve_raw.setData(self.time_sec, self.raw_signal)
 
     def update_raw(self, df_updated):
