@@ -170,6 +170,8 @@ def compute_cross_spectrum(sig1, sig2, fs,
         cross_power: |S_xy| cross-spectral magnitude.
         phase: angle(S_xy) in **degrees**.
         coherence: magnitude-squared coherence (0–1).
+        real_part: Re(S_xy)
+        imag_part: Im(S_xy)
     """
     N = len(sig1)
     assert len(sig2) == N, "Signals must have the same length"
@@ -197,9 +199,11 @@ def compute_cross_spectrum(sig1, sig2, fs,
     cross_power = np.abs(Sxy)
     phase = np.angle(Sxy, deg=True)
     coherence = np.abs(Sxy) ** 2 / (Sxx * Syy + 1e-30)
+    real_part = np.real(Sxy)
+    imag_part = np.imag(Sxy)
 
     freqs = np.fft.rfftfreq(N, d=1.0 / fs)
-    return freqs, cross_power, phase, coherence
+    return freqs, cross_power, phase, coherence, real_part, imag_part
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +339,12 @@ def run_spectral_pipeline(pm_signals, fs, lowcut, highcut,
         'Pol B': ('20 MHz Pol B', '25 MHz Pol B'),
     }
     for pol_name, (ch20, ch25) in cross_pairs.items():
-        _, power, phase, coh = compute_cross_spectrum(
+        _, power, phase, coh, real_p, imag_p = compute_cross_spectrum(
             filtered[ch20], filtered[ch25], new_fs,
         )
         cross_results[pol_name] = {
             'power': power, 'phase': phase, 'coherence': coh,
+            'real': real_p, 'imag': imag_p
         }
 
     # 5. Peak detection + velocity estimation

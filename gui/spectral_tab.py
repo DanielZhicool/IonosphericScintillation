@@ -195,43 +195,79 @@ class SpectralTab(QWidget):
                 p.plot(peak_x, peak_y, pen=None, symbol='t', symbolPen='r', symbolBrush='r', symbolSize=10)
 
     def _build_cross_spectrum(self, graph, cross_data, periods, mask, p_min, p_max):
-        """Helper to build a 2x2 grid for Cross-Spectrum (Row 1: Coherence, Row 2: Phase)."""
-        p_coh_a = graph.addPlot(row=0, col=0, title="Coherence (Pol A: 20 vs 25 MHz)")
-        p_coh_b = graph.addPlot(row=0, col=1, title="Coherence (Pol B: 20 vs 25 MHz)")
+        """Helper to build a 2x3 grid for Cross-Spectrum matching MATLAB reference."""
+        p_pwa = graph.addPlot(row=0, col=0)
+        p_rea = graph.addPlot(row=0, col=1, title="Ко-спектр (Синфазность)")
+        p_ima = graph.addPlot(row=0, col=2, title="Квадратурный спектр (Сдвиг фазы)")
         
-        p_phs_a = graph.addPlot(row=1, col=0, title="Phase (Pol A: 20 vs 25 MHz)")
-        p_phs_b = graph.addPlot(row=1, col=1, title="Phase (Pol B: 20 vs 25 MHz)")
+        p_pwb = graph.addPlot(row=1, col=0)
+        p_reb = graph.addPlot(row=1, col=1, title="Ко-спектр (Синфазность)")
+        p_imb = graph.addPlot(row=1, col=2, title="Квадратурный спектр (Сдвиг фазы)")
         
-        for p in [p_coh_a, p_coh_b, p_phs_a, p_phs_b]:
+        all_plots = [p_pwa, p_rea, p_ima, p_pwb, p_reb, p_imb]
+        for p in all_plots:
             p.setLabel('bottom', 'Period (s)')
             p.showGrid(x=True, y=True)
             p.setXRange(p_min, p_max)
             
-        p_coh_b.setXLink(p_coh_a)
-        p_phs_a.setXLink(p_coh_a)
-        p_phs_b.setXLink(p_coh_a)
-        
-        p_coh_a.setLabel('left', 'Coherence')
-        p_coh_a.setYRange(0, 1)
-        p_coh_b.setLabel('left', 'Coherence')
-        p_coh_b.setYRange(0, 1)
-        
-        p_phs_a.setLabel('left', 'Phase (°)')
-        p_phs_a.setYRange(-180, 180)
-        p_phs_b.setLabel('left', 'Phase (°)')
-        p_phs_b.setYRange(-180, 180)
-        
-        if 'Pol A' in cross_data:
-            vals_coh = cross_data['Pol A']['coherence'][mask][::-1]
-            vals_phs = cross_data['Pol A']['phase'][mask][::-1]
-            p_coh_a.plot(periods, vals_coh, pen=pg.mkPen(SPECTRAL_CROSS_COLORS.get('Pol A', 'w'), width=1.5))
-            p_phs_a.plot(periods, vals_phs, pen=pg.mkPen(SPECTRAL_CROSS_COLORS.get('Pol A', 'w'), width=1.5))
+            # Horizontal line at 0 for real/imag
+            if p in (p_rea, p_ima, p_reb, p_imb):
+                zero_line = pg.InfiniteLine(
+                    pos=0, angle=0, pen=pg.mkPen('gray', width=1.5, style=Qt.DashLine)
+                )
+                p.addItem(zero_line)
+                
+        # Link X axes
+        for p in all_plots[1:]:
+            p.setXLink(all_plots[0])
             
-        if 'Pol B' in cross_data:
-            vals_coh = cross_data['Pol B']['coherence'][mask][::-1]
-            vals_phs = cross_data['Pol B']['phase'][mask][::-1]
-            p_coh_b.plot(periods, vals_coh, pen=pg.mkPen(SPECTRAL_CROSS_COLORS.get('Pol B', 'w'), width=1.5))
-            p_phs_b.plot(periods, vals_phs, pen=pg.mkPen(SPECTRAL_CROSS_COLORS.get('Pol B', 'w'), width=1.5))
+        p_pwa.setLabel('left', 'Мощность')
+        p_pwb.setLabel('left', 'Мощность')
+        p_rea.setLabel('left', 'Re(Pxy)')
+        p_reb.setLabel('left', 'Re(Pxy)')
+        p_ima.setLabel('left', 'Im(Pxy)')
+        p_imb.setLabel('left', 'Im(Pxy)')
+        
+        for pol_name, row_plots in [('Pol A', (p_pwa, p_rea, p_ima)), ('Pol B', (p_pwb, p_reb, p_imb))]:
+            if pol_name not in cross_data:
+                continue
+                
+            p_pow, p_re, p_im = row_plots
+            
+            vals_pow = cross_data[pol_name]['power'][mask][::-1]
+            vals_re = cross_data[pol_name]['real'][mask][::-1]
+            vals_im = cross_data[pol_name]['imag'][mask][::-1]
+            
+            # Using white instead of black for the power plot since the app is dark mode
+            p_pow.plot(periods, vals_pow, pen=pg.mkPen('w', width=1.5))
+            p_re.plot(periods, vals_re, pen=pg.mkPen('#42A5F5', width=1.5)) # Blue
+            p_im.plot(periods, vals_im, pen=pg.mkPen('#EF5350', width=1.5)) # Red
+            
+            # Peak detection (Top-3 for Cross Spectrum)
+            peaks, _ = find_peaks(vals_pow, distance=max(1, len(vals_pow)//50))
+            if len(peaks) > 0:
+                top_indices = sorted(peaks, key=lambda i: vals_pow[i], reverse=True)[:3]
+                top_periods = [periods[i] for i in top_indices]
+                
+                peaks_str = ", ".join(f"{tp:.1f}" for tp in sorted(top_periods, reverse=True))
+                title_html = (
+                    f"Поляризация {pol_name[-1]} (20 МГц vs 25 МГц)<br>"
+                    f"<span style='color:red; font-size: 10pt;'>Амплитуда |Pxy| (Топ-3: {peaks_str} с)</span>"
+                )
+                p_pow.setTitle(title_html)
+                
+                peak_x = [periods[i] for i in top_indices]
+                peak_y = [vals_pow[i] for i in top_indices]
+                p_pow.plot(peak_x, peak_y, pen=None, symbol='t', symbolPen='r', symbolBrush='r', symbolSize=10)
+                
+                # Add vertical lines to real and imag plots at the peak periods
+                for px in peak_x:
+                    vl_re = pg.InfiniteLine(pos=px, angle=90, pen=pg.mkPen('r', width=1.5, style=Qt.DotLine))
+                    p_re.addItem(vl_re)
+                    vl_im = pg.InfiniteLine(pos=px, angle=90, pen=pg.mkPen('r', width=1.5, style=Qt.DotLine))
+                    p_im.addItem(vl_im)
+            else:
+                p_pow.setTitle(f"Поляризация {pol_name[-1]} (20 МГц vs 25 МГц)<br>Амплитуда |Pxy|")
 
     # ------------------------------------------------------------------
     # Velocity table formatter
