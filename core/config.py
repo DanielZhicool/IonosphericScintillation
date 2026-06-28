@@ -21,3 +21,10 @@ MORSE_BETA = 60         # Wavelet time-bandwidth
 GAUSSIAN_SIGMA_FREQ = 2.5
 GAUSSIAN_SIGMA_TIME = 1.0
 CWT_DYNAMIC_RANGE_DB = 40.0
+
+# Spectral-Correlation Analysis (Steps 10-13)
+MTM_N_TAPERS = 7          # Number of DPSS tapers (Thomson Multitaper)
+MTM_NW = 4.0              # Time-bandwidth product for DPSS windows
+FTEST_CONFIDENCE = 0.95   # F-test significance level
+CROSS_SPECTRUM_DX = 2500  # Beam separation in meters (model parameter)
+VELOCITY_N_PEAKS = 3      # Number of cross-spectral peaks to report

@@ -38,3 +38,28 @@ MSG_SKIPPED_TABS_TEMPLATE = "Skipped (no PM6 data):\n{}"
 MSG_TAB_CREATION_NONE = "No session tabs were created."
 MSG_NO_PM6_SELECTED_TITLE = "No PM6 data"
 MSG_NO_PM6_SELECTED_TEXT = "Please load PM6 data before cleaning or splitting sessions."
+
+# Spectral Analysis Tab
+BTN_SPECTRAL = "6. Spectral Analysis"
+SPECTRAL_TAB_SUFFIX = " \u27e8Spectral\u27e9"
+SPECTRAL_BAND_SMALL = "Small bubbles (5\u2013150 s)"
+SPECTRAL_BAND_LARGE = "Large clouds (150\u2013600 s)"
+SPECTRAL_TAB_PSD_TITLE = "Multitaper PSD"
+SPECTRAL_TAB_FTEST_TITLE = "Thomson F-Test"
+SPECTRAL_TAB_CROSS_POWER_TITLE = "Cross-Spectrum Coherence"
+SPECTRAL_TAB_CROSS_PHASE_TITLE = "Cross-Spectrum Phase"
+SPECTRAL_TAB_VELOCITY_HEADER = "Ionospheric Drift Velocity Estimation"
+SPECTRAL_INSUFFICIENT_DATA = "Signal too short for this frequency band."
+MSG_SPECTRAL_NO_SOURCE_TITLE = "No source selected"
+MSG_SPECTRAL_NO_SOURCE_TEXT = "Navigate to a source tab (not Full overview) to run spectral analysis."
+MSG_SPECTRAL_ERROR_TITLE = "Spectral Analysis Error"
+SPECTRAL_CHANNEL_COLORS = {
+    '20 MHz Pol A': '#4FC3F7',
+    '20 MHz Pol B': '#81C784',
+    '25 MHz Pol A': '#E57373',
+    '25 MHz Pol B': '#FFB74D',
+}
+SPECTRAL_CROSS_COLORS = {
+    'Pol A': '#42A5F5',
+    'Pol B': '#EF5350',
+}

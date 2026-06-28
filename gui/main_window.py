@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import Qt
 from gui.constants import (
     APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
+    BTN_SPECTRAL,
     CHECK_MARKERS, CHECK_SMOOTH, COMBO_BAND_ITEMS, FILTER_PM6,
     FILTER_TEXT_FILES, LABEL_BAND, LABEL_CLEANING_HEADER,
     LABEL_DISPLAY_CHANNEL, LABEL_SIGMA, LABEL_WINDOW,
@@ -20,6 +21,8 @@ from gui.constants import (
     MSG_NO_PM6_SELECTED_TEXT, MSG_NO_PM6_SELECTED_TITLE,
     MSG_OPEN_ERROR_TITLE, MSG_SAVE_ERROR_TITLE,
     MSG_SKIPPED_TABS_TEMPLATE, MSG_TAB_CREATION_NONE,
+    MSG_SPECTRAL_NO_SOURCE_TITLE, MSG_SPECTRAL_NO_SOURCE_TEXT,
+    MSG_SPECTRAL_ERROR_TITLE, SPECTRAL_TAB_SUFFIX,
     FILE_DIALOG_PM6_TITLE, FILE_DIALOG_REGI_TITLE,
     SAVE_FILE_DEFAULT_NAME, SAVE_FILE_FILTER,
     MSG_CREATED_TABS_TEMPLATE
@@ -33,6 +36,8 @@ CHANNELS = ['P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 'P3_25A', 'M3_25A', 'P4_25B'
 
 from gui.plotting import TimeAxisItem
 from gui.tabs import SignalTab
+from gui.spectral_tab import SpectralTab
+from core.spectral_analysis import run_spectral_pipeline
 
 
 class Uran4App(QMainWindow):
@@ -113,6 +118,10 @@ class Uran4App(QMainWindow):
         self.btn_export.clicked.connect(self.export_plots)
         self.btn_export.setEnabled(False)
 
+        self.btn_spectral = QPushButton(BTN_SPECTRAL)
+        self.btn_spectral.clicked.connect(self.run_spectral_analysis)
+        self.btn_spectral.setEnabled(False)
+
         # Left control panel layout
         control_layout.addWidget(self.btn_load_pm6)
         control_layout.addWidget(self.lbl_status)
@@ -140,6 +149,8 @@ class Uran4App(QMainWindow):
         control_layout.addWidget(self.btn_analyze)
         control_layout.addSpacing(10)
         control_layout.addWidget(self.btn_export)
+        control_layout.addSpacing(10)
+        control_layout.addWidget(self.btn_spectral)
         control_layout.addStretch()
 
         self.tabs = QTabWidget()
@@ -156,7 +167,9 @@ class Uran4App(QMainWindow):
             return current_widget
         elif isinstance(current_widget, QTabWidget):
             # This is a specific day's tab. Get the active plot inside it.
-            return current_widget.currentWidget()
+            inner = current_widget.currentWidget()
+            if isinstance(inner, SignalTab):
+                return inner
         return None
 
     def on_tab_changed(self, index):
@@ -180,6 +193,7 @@ class Uran4App(QMainWindow):
         self.spin_window.setEnabled(enabled)
         self.spin_sigmas.setEnabled(enabled)
         self.check_smooth.setEnabled(enabled)
+        self.btn_spectral.setEnabled(enabled)
 
     def load_pm6(self):
         filepath, _ = QFileDialog.getOpenFileName(self, FILE_DIALOG_PM6_TITLE, "", FILTER_PM6)
@@ -407,3 +421,73 @@ class Uran4App(QMainWindow):
                 exporter.export(filepath)
             except Exception as e:
                 QMessageBox.critical(self, MSG_SAVE_ERROR_TITLE, str(e))
+
+    def run_spectral_analysis(self):
+        """Run the full spectral-correlation analysis on the active source transit."""
+        active_tab = self.get_active_tab()
+        if not active_tab or active_tab.tab_name == MAIN_TAB_NAME:
+            QMessageBox.warning(
+                self, MSG_SPECTRAL_NO_SOURCE_TITLE, MSG_SPECTRAL_NO_SOURCE_TEXT,
+            )
+            return
+
+        try:
+            df = active_tab.df_slice
+
+            # Compute P-M (interferometric difference) channels
+            pm_signals = {
+                '20 MHz Pol A': df['P1_20A'].values - df['M1_20A'].values,
+                '20 MHz Pol B': df['P2_20B'].values - df['M2_20B'].values,
+                '25 MHz Pol A': df['P3_25A'].values - df['M3_25A'].values,
+                '25 MHz Pol B': df['P4_25B'].values - df['M4_25B'].values,
+            }
+
+            window_size = self.spin_window.value()
+            if window_size % 2 == 0:
+                window_size += 1
+            n_sigmas = self.spin_sigmas.value()
+            apply_smoothing = self.check_smooth.isChecked()
+
+            signal_duration = len(df) / self.fs
+
+            band_results = {}
+            bands = [
+                ('small', 1.0 / 150.0, 1.0 / 5.0),
+                ('large', 1.0 / 600.0, 1.0 / 150.0),
+            ]
+
+            for band_key, lowcut, highcut in bands:
+                min_period = 1.0 / lowcut
+                if signal_duration < min_period:
+                    band_results[band_key] = None
+                    continue
+
+                band_results[band_key] = run_spectral_pipeline(
+                    pm_signals, self.fs, lowcut, highcut,
+                    window_size, n_sigmas, apply_smoothing,
+                )
+
+            # Find the day tab and source name
+            day_tab = self.tabs.currentWidget()
+            if not isinstance(day_tab, QTabWidget):
+                return
+
+            inner_idx = day_tab.currentIndex()
+            inner_name = day_tab.tabText(inner_idx)
+            spectral_name = inner_name + SPECTRAL_TAB_SUFFIX
+
+            # Replace existing SpectralTab if present
+            for i in range(day_tab.count()):
+                if day_tab.tabText(i) == spectral_name:
+                    day_tab.removeTab(i)
+                    break
+
+            spectral_tab = SpectralTab(inner_name, band_results)
+            day_tab.addTab(spectral_tab, spectral_name)
+            day_tab.setCurrentWidget(spectral_tab)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self, MSG_SPECTRAL_ERROR_TITLE,
+                f"Spectral analysis failed:\n{str(e)}",
+            )
