@@ -41,7 +41,9 @@ MSG_NO_PM6_SELECTED_TEXT = "Please load PM6 data before cleaning or splitting se
 
 # Spectral Analysis Tab
 BTN_SPECTRAL = "6. Spectral Analysis"
+BTN_GLOBAL_SPECTRAL = "7. Global Spectral Analysis"
 SPECTRAL_TAB_SUFFIX = " \u27e8Spectral\u27e9"
+GLOBAL_SPECTRAL_TAB_NAME = "\u27e8Global Spectral\u27e9"
 SPECTRAL_BAND_SMALL = "Small bubbles (5\u2013150 s)"
 SPECTRAL_BAND_LARGE = "Large clouds (150\u2013600 s)"
 SPECTRAL_TAB_PSD_TITLE = "Multitaper PSD"

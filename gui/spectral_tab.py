@@ -14,13 +14,9 @@ from PySide6.QtCore import Qt
 from gui.constants import (
     SPECTRAL_TAB_PSD_TITLE,
     SPECTRAL_TAB_FTEST_TITLE,
-    SPECTRAL_TAB_CROSS_POWER_TITLE,
-    SPECTRAL_TAB_CROSS_PHASE_TITLE,
     SPECTRAL_TAB_VELOCITY_HEADER,
     SPECTRAL_BAND_SMALL,
     SPECTRAL_BAND_LARGE,
-    SPECTRAL_CHANNEL_COLORS,
-    SPECTRAL_CROSS_COLORS,
     SPECTRAL_INSUFFICIENT_DATA,
 )
 
@@ -102,18 +98,16 @@ class SpectralTab(QWidget):
         # ── 1. PSD Tab (2x2 Grid) ────────────────────────────────────
         psd_widget = pg.GraphicsLayoutWidget()
         analysis_tabs.addTab(psd_widget, SPECTRAL_TAB_PSD_TITLE)
-        self._build_2x2_grid(
+        self._build_psd_grid(
             psd_widget, results['psd'], periods, mask, period_min, period_max,
-            ylabel='PSD', log_y=True
         )
 
         # ── 2. F-Test Tab (2x2 Grid) ─────────────────────────────────
         ftest_widget = pg.GraphicsLayoutWidget()
         analysis_tabs.addTab(ftest_widget, SPECTRAL_TAB_FTEST_TITLE)
-        threshold = results['ftest'].get('threshold', 1.0)
-        self._build_2x2_grid(
-            ftest_widget, results['ftest'], periods, mask, period_min, period_max,
-            ylabel='F-statistic', threshold=threshold
+        self._build_ftest_grid(
+            ftest_widget, results['ftest'], periods, mask,
+            freqs, period_min, period_max,
         )
 
         # ── 3. Cross-Spectrum Tab (2x2 Grid) ─────────────────────────
@@ -136,63 +130,133 @@ class SpectralTab(QWidget):
 
         return widget
 
-    def _build_2x2_grid(self, graph, data_dict, periods, mask, p_min, p_max, ylabel, log_y=False, threshold=None):
-        """Helper to build a 2x2 grid of plots for the 4 P-M channels."""
+    def _build_psd_grid(self, graph, data_dict, periods, mask, p_min, p_max):
+        """Build 2x2 PSD grid — all channels in blue with Top-5 peak markers."""
         channels = [
             ('20 MHz Pol A', 0, 0),
             ('20 MHz Pol B', 0, 1),
             ('25 MHz Pol A', 1, 0),
             ('25 MHz Pol B', 1, 1),
         ]
-        
         link_plot = None
         for ch_name, row, col in channels:
             if ch_name not in data_dict:
                 continue
-                
-            p = graph.addPlot(row=row, col=col, title=f"{ch_name}")
-            p.setLabel('bottom', 'Period (s)')
-            p.setLabel('left', ylabel)
+            label = ch_name.replace('MHz', 'МГц').replace('Pol', 'Пол.')
+            p = graph.addPlot(row=row, col=col, title=label)
+            p.setLabel('bottom', 'Период (Сек)')
+            p.setLabel('left', 'Спектральная мощность (дБ)')
             p.showGrid(x=True, y=True)
             p.setXRange(p_min, p_max)
-            if log_y:
-                p.setLogMode(x=False, y=True)
-                
+            p.setLogMode(x=False, y=True)
             if link_plot is None:
                 link_plot = p
             else:
                 p.setXLink(link_plot)
-                
-            if threshold is not None:
-                thresh_line = pg.InfiniteLine(
-                    pos=threshold, angle=0,
-                    pen=pg.mkPen('r', width=1.5, style=Qt.DashLine),
-                )
-                p.addItem(thresh_line)
-                thresh_label = pg.TextItem(f'95 % ({threshold:.1f})', color='r', anchor=(1, 1))
-                thresh_label.setPos(p_max, threshold)
-                p.addItem(thresh_label)
-                
-            vals = data_dict[ch_name][mask][::-1]
-            color = SPECTRAL_CHANNEL_COLORS.get(ch_name, '#FFFFFF')
-            p.plot(periods, vals, pen=pg.mkPen(color, width=1.5))
 
-            # Peak finding for annotations (matching MATLAB reference)
-            peaks, _ = find_peaks(vals, distance=max(1, len(vals)//50))
+            vals = data_dict[ch_name][mask][::-1]
+            p.plot(periods, vals, pen=pg.mkPen('#42A5F5', width=1.0))  # uniform blue
+
+            peaks, _ = find_peaks(vals, distance=max(1, len(vals) // 50))
             if len(peaks) > 0:
-                # Top 5 by amplitude
-                top_indices = sorted(peaks, key=lambda i: vals[i], reverse=True)[:5]
-                top_periods = [periods[i] for i in top_indices]
-                
-                # HTML Title with red subtitle for peaks
-                peaks_str = ", ".join(f"{tp:.1f}" for tp in sorted(top_periods, reverse=True))
-                title_html = f"{ch_name}<br><span style='color:red; font-size: 10pt;'>Top-5 periods (s): {peaks_str}</span>"
+                top_idx = sorted(peaks, key=lambda i: vals[i], reverse=True)[:5]
+                top_periods = sorted([periods[i] for i in top_idx], reverse=True)
+                peaks_str = ", ".join(f"{tp:.1f}" for tp in top_periods)
+                title_html = (f"{label}<br>"
+                              f"<span style='color:red; font-size:9pt;'>"
+                              f"Топ-5 периодов (с): {peaks_str}</span>")
                 p.setTitle(title_html)
-                
-                # Draw red markers on the peaks
-                peak_x = [periods[i] for i in top_indices]
-                peak_y = [vals[i] for i in top_indices]
-                p.plot(peak_x, peak_y, pen=None, symbol='t', symbolPen='r', symbolBrush='r', symbolSize=10)
+                peak_x = [periods[i] for i in top_idx]
+                peak_y = [vals[i] for i in top_idx]
+                p.plot(peak_x, peak_y, pen=None, symbol='t',
+                       symbolPen='r', symbolBrush='r', symbolSize=10)
+
+    def _build_ftest_grid(self, graph, data_dict, periods, mask,
+                          freqs_full, p_min, p_max):
+        """Build 2x2 F-Test grid matching the MATLAB reference exactly."""
+        channels = [
+            ('20 MHz Pol A', 0, 0),
+            ('20 MHz Pol B', 0, 1),
+            ('25 MHz Pol A', 1, 0),
+            ('25 MHz Pol B', 1, 1),
+        ]
+        threshold = data_dict.get('threshold', 1.0)
+        link_plot = None
+
+        for ch_name, row, col in channels:
+            if ch_name not in data_dict:
+                continue
+
+            label = ch_name.replace('MHz', 'МГц').replace('Pol', 'Пол.')
+            T0 = data_dict.get(ch_name + '_T0', None)
+
+            # Build the title
+            if T0 is not None:
+                t2, t3 = T0 / 2.0, T0 / 3.0
+                title_html = (f"{label}<br>"
+                              f"<span style='color:#42A5F5; font-size:9pt;'>"
+                              f"T₀ = {T0:.1f} с | 2T: {t2:.1f} с | 3T: {t3:.1f} с</span>")
+            else:
+                title_html = label
+
+            p = graph.addPlot(row=row, col=col, title=title_html)
+            p.setLabel('bottom', 'Период (Сек)')
+            p.setLabel('left', 'F-Статистика')
+            p.showGrid(x=True, y=True)
+            p.setXRange(p_min, p_max)
+            if link_plot is None:
+                link_plot = p
+            else:
+                p.setXLink(link_plot)
+
+            vals = data_dict[ch_name][mask][::-1]
+            p.plot(periods, vals, pen=pg.mkPen('#42A5F5', width=0.8))  # uniform blue
+
+            # 99% threshold dashed red line with Russian label
+            thresh_line = pg.InfiniteLine(
+                pos=threshold, angle=0,
+                pen=pg.mkPen('r', width=1.5, style=Qt.DashLine),
+            )
+            p.addItem(thresh_line)
+            thresh_label = pg.TextItem(
+                f'99% Доверительный порог (F={threshold:.2f})',
+                color='r', anchor=(0, 1)
+            )
+            thresh_label.setPos(p_min + (p_max - p_min) * 0.01, threshold)
+            p.addItem(thresh_label)
+
+            if T0 is not None:
+                # Black vertical stem at T0
+                vl_t0 = pg.InfiniteLine(
+                    pos=T0, angle=90,
+                    pen=pg.mkPen('w', width=1.5),
+                )
+                p.addItem(vl_t0)
+                t0_label = pg.TextItem('T₀', color='w', anchor=(0.5, 1))
+                t0_label.setPos(T0, p.viewRange()[1][1] if p.viewRange()[1][1] > 0 else threshold * 5)
+                p.addItem(t0_label)
+
+                # Red star marker at T0
+                # Find the index in the masked/reversed array closest to T0
+                t0_idx = int(np.argmin(np.abs(periods - T0)))
+                if 0 <= t0_idx < len(vals):
+                    p.plot([periods[t0_idx]], [vals[t0_idx]],
+                           pen=None, symbol='star',
+                           symbolPen='r', symbolBrush='r', symbolSize=14)
+
+                # Magenta dashed lines at 3T and 2T (harmonics / sub-harmonics)
+                t2, t3 = T0 / 2.0, T0 / 3.0
+                for harm_period, harm_label in [(t3, '3T'), (t2, '2T')]:
+                    if p_min <= harm_period <= p_max:
+                        vl = pg.InfiniteLine(
+                            pos=harm_period, angle=90,
+                            pen=pg.mkPen('#FF00FF', width=1.2, style=Qt.DashLine),
+                        )
+                        p.addItem(vl)
+                        hl = pg.TextItem(harm_label, color='#FF00FF', anchor=(0.5, 1))
+                        hl.setPos(harm_period, threshold * 2)
+                        p.addItem(hl)
+
 
     def _build_cross_spectrum(self, graph, cross_data, periods, mask, p_min, p_max):
         """Helper to build a 2x3 grid for Cross-Spectrum matching MATLAB reference."""

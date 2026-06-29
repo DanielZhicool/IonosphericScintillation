@@ -22,7 +22,6 @@ from core.config import (
 )
 from core.signal_processing import (
     clean_and_smooth_signal,
-    upsample_pchip,
     bandpass_filter,
 )
 
@@ -33,16 +32,20 @@ from core.signal_processing import (
 
 def _prepare_signal(raw_signal, fs, lowcut, highcut,
                     window_size, n_sigmas, apply_smoothing):
-    """Clean, upsample, and bandpass-filter a signal for spectral analysis."""
+    """Clean and bandpass-filter a signal for spectral analysis.
+
+    Note: No PCHIP upsampling is applied here — unlike CWT, FFT-based
+    spectral analysis works best at the original sampling rate for correct
+    frequency bin placement and maximum period resolution.
+    """
     cleaned = clean_and_smooth_signal(
         raw_signal,
         window_size=window_size,
         n_sigmas=n_sigmas,
         apply_smoothing=apply_smoothing,
     )
-    upsampled, new_fs = upsample_pchip(cleaned, fs)
-    filtered = bandpass_filter(upsampled, lowcut, highcut, new_fs)
-    return filtered, new_fs
+    filtered = bandpass_filter(cleaned, lowcut, highcut, fs)
+    return filtered, fs
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +99,7 @@ def compute_multitaper_psd(signal, fs, n_tapers=MTM_N_TAPERS, nw=MTM_NW):
 # ---------------------------------------------------------------------------
 
 def compute_ftest(signal, fs, n_tapers=MTM_N_TAPERS, nw=MTM_NW,
-                  confidence=FTEST_CONFIDENCE):
+                  confidence=0.99, lowcut=None, highcut=None):
     """
     Thomson F-test for detecting deterministic harmonic components.
 
@@ -145,7 +148,20 @@ def compute_ftest(signal, fs, n_tapers=MTM_N_TAPERS, nw=MTM_NW,
     freqs = np.fft.rfftfreq(N, d=1.0 / fs)
     threshold = f_dist.ppf(confidence, 2, 2 * n_tapers - 2)
 
-    return freqs, f_stat, threshold
+    # Find the dominant period T0 (highest F-stat peak above threshold)
+    # Restrict search to the analysis band so leakage outside doesn't win
+    if lowcut is not None and highcut is not None:
+        band_mask = (freqs >= lowcut) & (freqs <= highcut)
+    else:
+        band_mask = freqs > 0
+    f_stat_band = np.where(band_mask, f_stat, 0.0)
+    dominant_idx = int(np.argmax(f_stat_band))
+    if band_mask[dominant_idx] and f_stat[dominant_idx] > threshold:
+        T0 = 1.0 / freqs[dominant_idx]
+    else:
+        T0 = None
+
+    return freqs, f_stat, threshold, T0
 
 
 # ---------------------------------------------------------------------------
@@ -327,8 +343,10 @@ def run_spectral_pipeline(pm_signals, fs, lowcut, highcut,
     ftest_results = {}
     threshold = None
     for ch_name, sig in filtered.items():
-        _, fstat, thresh = compute_ftest(sig, new_fs)
+        _, fstat, thresh, T0 = compute_ftest(sig, new_fs,
+                                              lowcut=lowcut, highcut=highcut)
         ftest_results[ch_name] = fstat
+        ftest_results[ch_name + '_T0'] = T0
         threshold = thresh
     ftest_results['threshold'] = threshold
 

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
 from PySide6.QtCore import Qt
 from gui.constants import (
     APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
-    BTN_SPECTRAL,
+    BTN_SPECTRAL, BTN_GLOBAL_SPECTRAL, GLOBAL_SPECTRAL_TAB_NAME,
     CHECK_MARKERS, CHECK_SMOOTH, COMBO_BAND_ITEMS, FILTER_PM6,
     FILTER_TEXT_FILES, LABEL_BAND, LABEL_CLEANING_HEADER,
     LABEL_DISPLAY_CHANNEL, LABEL_SIGMA, LABEL_WINDOW,
@@ -122,6 +122,10 @@ class Uran4App(QMainWindow):
         self.btn_spectral.clicked.connect(self.run_spectral_analysis)
         self.btn_spectral.setEnabled(False)
 
+        self.btn_global_spectral = QPushButton(BTN_GLOBAL_SPECTRAL)
+        self.btn_global_spectral.clicked.connect(self.run_global_spectral_analysis)
+        self.btn_global_spectral.setEnabled(False)
+
         # Left control panel layout
         control_layout.addWidget(self.btn_load_pm6)
         control_layout.addWidget(self.lbl_status)
@@ -151,6 +155,8 @@ class Uran4App(QMainWindow):
         control_layout.addWidget(self.btn_export)
         control_layout.addSpacing(10)
         control_layout.addWidget(self.btn_spectral)
+        control_layout.addSpacing(4)
+        control_layout.addWidget(self.btn_global_spectral)
         control_layout.addStretch()
 
         self.tabs = QTabWidget()
@@ -194,6 +200,7 @@ class Uran4App(QMainWindow):
         self.spin_sigmas.setEnabled(enabled)
         self.check_smooth.setEnabled(enabled)
         self.btn_spectral.setEnabled(enabled)
+        self.btn_global_spectral.setEnabled(enabled)
 
     def load_pm6(self):
         filepath, _ = QFileDialog.getOpenFileName(self, FILE_DIALOG_PM6_TITLE, "", FILTER_PM6)
@@ -490,4 +497,58 @@ class Uran4App(QMainWindow):
             QMessageBox.critical(
                 self, MSG_SPECTRAL_ERROR_TITLE,
                 f"Spectral analysis failed:\n{str(e)}",
+            )
+
+    def run_global_spectral_analysis(self):
+        """Run spectral analysis on the full PM6 dataset (matches professor's 'Global' approach)."""
+        if self.df_pm6 is None:
+            QMessageBox.warning(self, MSG_SPECTRAL_NO_SOURCE_TITLE,
+                                "Load a PM6 file first.")
+            return
+
+        try:
+            df = self.df_pm6
+
+            # Compute P-M interferometric channels over entire dataset
+            pm_signals = {
+                '20 MHz Pol A': df['P1_20A'].values - df['M1_20A'].values,
+                '20 MHz Pol B': df['P2_20B'].values - df['M2_20B'].values,
+                '25 MHz Pol A': df['P3_25A'].values - df['M3_25A'].values,
+                '25 MHz Pol B': df['P4_25B'].values - df['M4_25B'].values,
+            }
+
+            window_size = self.spin_window.value()
+            if window_size % 2 == 0:
+                window_size += 1
+            n_sigmas = self.spin_sigmas.value()
+            apply_smoothing = self.check_smooth.isChecked()
+
+            signal_duration = len(df) / self.fs
+
+            band_results = {}
+            bands = [
+                ('small', 1.0 / 150.0, 1.0 / 5.0),
+                ('large', 1.0 / 600.0, 1.0 / 150.0),
+            ]
+            for band_key, lowcut, highcut in bands:
+                band_results[band_key] = run_spectral_pipeline(
+                    pm_signals, self.fs, lowcut, highcut,
+                    window_size, n_sigmas, apply_smoothing,
+                )
+
+            # Place result as a top-level tab (not nested in a day group)
+            # Replace existing global spectral tab if present
+            for i in range(self.tabs.count()):
+                if self.tabs.tabText(i) == GLOBAL_SPECTRAL_TAB_NAME:
+                    self.tabs.removeTab(i)
+                    break
+
+            spectral_tab = SpectralTab("Global", band_results)
+            idx = self.tabs.addTab(spectral_tab, GLOBAL_SPECTRAL_TAB_NAME)
+            self.tabs.setCurrentIndex(idx)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self, MSG_SPECTRAL_ERROR_TITLE,
+                f"Global spectral analysis failed:\n{str(e)}",
             )
