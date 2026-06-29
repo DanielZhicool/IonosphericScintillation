@@ -28,6 +28,7 @@ class SignalTab(QWidget):
         axis_p1 = TimeAxisItem(self.start_datetime, orientation='bottom')
         self.p1 = self.graph_widget.addPlot(title=RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=self.current_channel), axisItems={'bottom': axis_p1})
         self.p1.showGrid(x=True, y=True)
+        self.p1.setLabel('left', 'Amplitude')
         self.curve_raw = self.p1.plot(self.time_sec, self.raw_signal, pen='b')
         
         self.region = pg.LinearRegionItem()
@@ -43,6 +44,7 @@ class SignalTab(QWidget):
         self.p2 = self.graph_widget.addPlot(title=IONOSPHERIC_TITLE, axisItems={'bottom': axis_p2})
         self.p2.showGrid(x=True, y=True)
         self.p2.setXLink(self.p1)
+        self.p2.setLabel('left', 'Amplitude')
         self.curve_filtered = self.p2.plot(pen='g')
 
         self.graph_widget.nextRow()
@@ -51,9 +53,17 @@ class SignalTab(QWidget):
         axis_p3 = TimeAxisItem(self.start_datetime, orientation='bottom')
         self.p3 = self.graph_widget.addPlot(title=SPECTROGRAM_TITLE, axisItems={'bottom': axis_p3})
         self.p3.setXLink(self.p1)
+        self.p3.setLabel('left', 'Frequency', units='Hz')
+        
         self.img_spec = pg.ImageItem()
         self.p3.addItem(self.img_spec)
-        self.img_spec.setColorMap(pg.colormap.get('viridis'))  # Use 'viridis' colormap
+        
+        cmap = pg.colormap.get('viridis')
+        self.img_spec.setColorMap(cmap)
+        
+        self.cbar = pg.ColorBarItem(colorMap=cmap)
+        self.cbar.setImageItem(self.img_spec, insert_in=self.p3)
+        self.cbar.getAxis('right').setLabel('Power', units='dB')
 
     def set_channel(self, channel_name):
         self.current_channel = channel_name

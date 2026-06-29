@@ -5,7 +5,7 @@ import pyqtgraph.exporters
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QFileDialog, 
                                QComboBox, QSplitter, QMessageBox, QTabWidget,
-                               QSpinBox, QDoubleSpinBox, QCheckBox)
+                               QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox)
 from PySide6.QtCore import Qt
 from gui.constants import (
     APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
@@ -126,37 +126,58 @@ class Uran4App(QMainWindow):
         self.btn_global_spectral.clicked.connect(self.run_global_spectral_analysis)
         self.btn_global_spectral.setEnabled(False)
 
-        # Left control panel layout
-        control_layout.addWidget(self.btn_load_pm6)
-        control_layout.addWidget(self.lbl_status)
-        control_layout.addSpacing(10)
-        control_layout.addWidget(QLabel(LABEL_DISPLAY_CHANNEL))
-        control_layout.addWidget(self.combo_channel)
-        control_layout.addSpacing(10)
-        control_layout.addWidget(self.btn_load_logs)
-        control_layout.addWidget(self.check_markers)
+        # --- Layout Assembly with Group Boxes ---
         
-        # Integrate cleaning controls
-        control_layout.addSpacing(15)
-        control_layout.addWidget(QLabel(LABEL_CLEANING_HEADER))
-        control_layout.addWidget(QLabel(LABEL_WINDOW))
-        control_layout.addWidget(self.spin_window)
-        control_layout.addWidget(QLabel(LABEL_SIGMA))
-        control_layout.addWidget(self.spin_sigmas)
-        control_layout.addWidget(self.check_smooth)
+        # 1. Data & Sessions
+        group_data = QGroupBox("1. Data & Sessions")
+        layout_data = QVBoxLayout()
+        layout_data.addWidget(self.btn_load_pm6)
+        layout_data.addWidget(self.lbl_status)
+        layout_data.addWidget(self.btn_load_logs)
+        group_data.setLayout(layout_data)
         
-        control_layout.addSpacing(15)
-        control_layout.addWidget(self.btn_apply_noise)
-        control_layout.addSpacing(10)
-        control_layout.addWidget(QLabel(LABEL_BAND))
-        control_layout.addWidget(self.combo_band)
-        control_layout.addWidget(self.btn_analyze)
-        control_layout.addSpacing(10)
-        control_layout.addWidget(self.btn_export)
-        control_layout.addSpacing(10)
-        control_layout.addWidget(self.btn_spectral)
-        control_layout.addSpacing(4)
-        control_layout.addWidget(self.btn_global_spectral)
+        # 2. View Options
+        group_view = QGroupBox("2. View Options")
+        layout_view = QVBoxLayout()
+        layout_view.addWidget(QLabel(LABEL_DISPLAY_CHANNEL))
+        layout_view.addWidget(self.combo_channel)
+        layout_view.addWidget(self.check_markers)
+        group_view.setLayout(layout_view)
+        
+        # 3. Signal Processing
+        group_proc = QGroupBox("3. Signal Processing")
+        layout_proc = QVBoxLayout()
+        layout_proc.addWidget(QLabel("Filter window size (samples):"))
+        layout_proc.addWidget(self.spin_window)
+        layout_proc.addWidget(QLabel("Outlier threshold (sigma):"))
+        layout_proc.addWidget(self.spin_sigmas)
+        layout_proc.addWidget(self.check_smooth)
+        layout_proc.addWidget(self.btn_apply_noise)
+        layout_proc.addSpacing(10)
+        layout_proc.addWidget(QLabel(LABEL_BAND))
+        layout_proc.addWidget(self.combo_band)
+        layout_proc.addWidget(self.btn_analyze)
+        group_proc.setLayout(layout_proc)
+        
+        # 4. Spectral Analysis
+        group_spectral = QGroupBox("4. Spectral Analysis")
+        layout_spectral = QVBoxLayout()
+        layout_spectral.addWidget(self.btn_spectral)
+        layout_spectral.addWidget(self.btn_global_spectral)
+        group_spectral.setLayout(layout_spectral)
+        
+        # 5. Export
+        group_export = QGroupBox("5. Export")
+        layout_export = QVBoxLayout()
+        layout_export.addWidget(self.btn_export)
+        group_export.setLayout(layout_export)
+        
+        # Add groups to main control layout
+        control_layout.addWidget(group_data)
+        control_layout.addWidget(group_view)
+        control_layout.addWidget(group_proc)
+        control_layout.addWidget(group_spectral)
+        control_layout.addWidget(group_export)
         control_layout.addStretch()
 
         self.tabs = QTabWidget()
@@ -315,18 +336,23 @@ class Uran4App(QMainWindow):
                     day_tab_widgets[date_str].addTab(target_tab, inner_tab_name)
                     created_tabs.append(marker_name)
 
-                    # Draw a green marker on "Full overview"
-                    line = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
-                    text = pg.TextItem(marker_name, color=(0, 255, 0), anchor=(0.5, 0))
-                    text.setPos((s_sec + e_sec) / 2, -20)
+                    # Draw green markers on all 3 graphs of "Full overview"
+                    line1 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
+                    line2 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
+                    line3 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
+                    
+                    text = pg.TextItem(marker_name, color=(0, 255, 0), anchor=(0, 0.5), angle=90)
+                    text.setPos((s_sec + e_sec) / 2, 0)
                     
                     is_visible = self.check_markers.isChecked()
-                    line.setVisible(is_visible)
-                    text.setVisible(is_visible)
+                    for item in [line1, line2, line3, text]:
+                        item.setVisible(is_visible)
 
-                    main_tab.p1.addItem(line)
+                    main_tab.p1.addItem(line1)
                     main_tab.p1.addItem(text)
-                    main_tab.session_markers.extend([line, text])
+                    main_tab.p2.addItem(line2)
+                    main_tab.p3.addItem(line3)
+                    main_tab.session_markers.extend([line1, line2, line3, text])
                 else:
                     skipped_tabs.append(f"{target} ({s_sec:.0f}s - {e_sec:.0f}s)")
 

@@ -142,10 +142,10 @@ class SpectralTab(QWidget):
         for ch_name, row, col in channels:
             if ch_name not in data_dict:
                 continue
-            label = ch_name.replace('MHz', 'МГц').replace('Pol', 'Пол.')
+            label = ch_name
             p = graph.addPlot(row=row, col=col, title=label)
-            p.setLabel('bottom', 'Период (Сек)')
-            p.setLabel('left', 'Спектральная мощность (дБ)')
+            p.setLabel('bottom', 'Period (Sec)')
+            p.setLabel('left', 'Spectral Power (dB)')
             p.showGrid(x=True, y=True)
             p.setXRange(p_min, p_max)
             p.setLogMode(x=False, y=True)
@@ -164,7 +164,7 @@ class SpectralTab(QWidget):
                 peaks_str = ", ".join(f"{tp:.1f}" for tp in top_periods)
                 title_html = (f"{label}<br>"
                               f"<span style='color:red; font-size:9pt;'>"
-                              f"Топ-5 периодов (с): {peaks_str}</span>")
+                              f"Top 5 periods (s): {peaks_str}</span>")
                 p.setTitle(title_html)
                 peak_x = [periods[i] for i in top_idx]
                 peak_y = [vals[i] for i in top_idx]
@@ -187,7 +187,7 @@ class SpectralTab(QWidget):
             if ch_name not in data_dict:
                 continue
 
-            label = ch_name.replace('MHz', 'МГц').replace('Pol', 'Пол.')
+            label = ch_name
             T0 = data_dict.get(ch_name + '_T0', None)
 
             # Build the title
@@ -195,13 +195,13 @@ class SpectralTab(QWidget):
                 t2, t3 = T0 / 2.0, T0 / 3.0
                 title_html = (f"{label}<br>"
                               f"<span style='color:#42A5F5; font-size:9pt;'>"
-                              f"T₀ = {T0:.1f} с | 2T: {t2:.1f} с | 3T: {t3:.1f} с</span>")
+                              f"T₀ = {T0:.1f} s | 2T: {t2:.1f} s | 3T: {t3:.1f} s</span>")
             else:
                 title_html = label
 
             p = graph.addPlot(row=row, col=col, title=title_html)
-            p.setLabel('bottom', 'Период (Сек)')
-            p.setLabel('left', 'F-Статистика')
+            p.setLabel('bottom', 'Period (Sec)')
+            p.setLabel('left', 'F-Statistic')
             p.showGrid(x=True, y=True)
             p.setXRange(p_min, p_max)
             if link_plot is None:
@@ -219,7 +219,7 @@ class SpectralTab(QWidget):
             )
             p.addItem(thresh_line)
             thresh_label = pg.TextItem(
-                f'99% Доверительный порог (F={threshold:.2f})',
+                f'99% Confidence Threshold (F={threshold:.2f})',
                 color='r', anchor=(0, 1)
             )
             thresh_label.setPos(p_min + (p_max - p_min) * 0.01, threshold)
@@ -261,12 +261,12 @@ class SpectralTab(QWidget):
     def _build_cross_spectrum(self, graph, cross_data, periods, mask, p_min, p_max):
         """Helper to build a 2x3 grid for Cross-Spectrum matching MATLAB reference."""
         p_pwa = graph.addPlot(row=0, col=0)
-        p_rea = graph.addPlot(row=0, col=1, title="Ко-спектр (Синфазность)")
-        p_ima = graph.addPlot(row=0, col=2, title="Квадратурный спектр (Сдвиг фазы)")
+        p_rea = graph.addPlot(row=0, col=1, title="Co-spectrum (In-phase)")
+        p_ima = graph.addPlot(row=0, col=2, title="Quadrature spectrum (Phase shift)")
         
         p_pwb = graph.addPlot(row=1, col=0)
-        p_reb = graph.addPlot(row=1, col=1, title="Ко-спектр (Синфазность)")
-        p_imb = graph.addPlot(row=1, col=2, title="Квадратурный спектр (Сдвиг фазы)")
+        p_reb = graph.addPlot(row=1, col=1, title="Co-spectrum (In-phase)")
+        p_imb = graph.addPlot(row=1, col=2, title="Quadrature spectrum (Phase shift)")
         
         all_plots = [p_pwa, p_rea, p_ima, p_pwb, p_reb, p_imb]
         for p in all_plots:
@@ -285,8 +285,8 @@ class SpectralTab(QWidget):
         for p in all_plots[1:]:
             p.setXLink(all_plots[0])
             
-        p_pwa.setLabel('left', 'Мощность')
-        p_pwb.setLabel('left', 'Мощность')
+        p_pwa.setLabel('left', 'Power')
+        p_pwb.setLabel('left', 'Power')
         p_rea.setLabel('left', 'Re(Pxy)')
         p_reb.setLabel('left', 'Re(Pxy)')
         p_ima.setLabel('left', 'Im(Pxy)')
@@ -315,8 +315,8 @@ class SpectralTab(QWidget):
                 
                 peaks_str = ", ".join(f"{tp:.1f}" for tp in sorted(top_periods, reverse=True))
                 title_html = (
-                    f"Поляризация {pol_name[-1]} (20 МГц vs 25 МГц)<br>"
-                    f"<span style='color:red; font-size: 10pt;'>Амплитуда |Pxy| (Топ-3: {peaks_str} с)</span>"
+                    f"Pol {pol_name[-1]} (20 MHz vs 25 MHz)<br>"
+                    f"<span style='color:red; font-size: 10pt;'>Amplitude |Pxy| (Top 3: {peaks_str} s)</span>"
                 )
                 p_pow.setTitle(title_html)
                 
@@ -331,7 +331,7 @@ class SpectralTab(QWidget):
                     vl_im = pg.InfiniteLine(pos=px, angle=90, pen=pg.mkPen('r', width=1.5, style=Qt.DotLine))
                     p_im.addItem(vl_im)
             else:
-                p_pow.setTitle(f"Поляризация {pol_name[-1]} (20 МГц vs 25 МГц)<br>Амплитуда |Pxy|")
+                p_pow.setTitle(f"Pol {pol_name[-1]} (20 MHz vs 25 MHz)<br>Amplitude |Pxy|")
 
     # ------------------------------------------------------------------
     # Velocity table formatter
