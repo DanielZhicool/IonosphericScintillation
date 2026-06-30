@@ -5,7 +5,7 @@ import pyqtgraph.exporters
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QFileDialog, 
                                QComboBox, QSplitter, QMessageBox, QTabWidget,
-                               QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox)
+                               QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QProgressBar)
 from PySide6.QtCore import Qt
 from gui.constants import (
     APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
@@ -32,11 +32,18 @@ from gui.constants import (
 from core.parsers import load_pm6_data, parse_regi_with_time, build_observation_sessions
 from core.signal_processing import fill_gap_with_red_noise, process_signal_pipeline
 
-CHANNELS = ['P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
+CHANNELS = [
+    'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
+    'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B', 
+    '20 MHz Pol A (P-M)', '20 MHz Pol B (P-M)', 
+    '25 MHz Pol A (P-M)', '25 MHz Pol B (P-M)'
+]
 
 from gui.plotting import TimeAxisItem
 from gui.tabs import SignalTab
 from gui.spectral_tab import SpectralTab
+from gui.settings_tab import SettingsDialog
+from gui.workers import SpectralAnalysisWorker, SignalAnalysisWorker
 from core.spectral_analysis import run_spectral_pipeline
 
 
@@ -179,6 +186,14 @@ class Uran4App(QMainWindow):
         control_layout.addWidget(group_spectral)
         control_layout.addWidget(group_export)
         control_layout.addStretch()
+        self.btn_settings = QPushButton("⚙ Settings")
+        self.btn_settings.clicked.connect(self.open_settings)
+        control_layout.addWidget(self.btn_settings)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
+        control_layout.addWidget(self.progress_bar)
 
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.on_tab_changed)
@@ -201,7 +216,14 @@ class Uran4App(QMainWindow):
 
     def on_tab_changed(self, index):
         if index >= 0 and self.df_pm6 is not None:
+            active_tab = self.get_active_tab()
+            if active_tab:
+                active_tab.set_channel(self.combo_channel.currentText())
             self.run_analysis()
+
+    def open_settings(self):
+        dialog = SettingsDialog(self)
+        dialog.exec()
 
     def change_active_channel(self, channel_name):
         active_tab = self.get_active_tab()
@@ -236,9 +258,11 @@ class Uran4App(QMainWindow):
             pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
             
             self.tabs.clear()
+            
             # Pass pm6_start_dt into the tab
             main_tab = SignalTab(self.df_pm6, pm6_start_dt, tab_name=MAIN_TAB_NAME, fs=self.fs)
             self.tabs.addTab(main_tab, MAIN_TAB_NAME)
+            self.tabs.setCurrentWidget(main_tab)
             
             self.lbl_status.setText(LBL_LOADED_SAMPLES.format(len(self.df_pm6)))
             self.set_widgets_enabled(True)
@@ -336,23 +360,33 @@ class Uran4App(QMainWindow):
                     day_tab_widgets[date_str].addTab(target_tab, inner_tab_name)
                     created_tabs.append(marker_name)
 
-                    # Draw green markers on all 3 graphs of "Full overview"
-                    line1 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
-                    line2 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
-                    line3 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((0, 255, 0), width=5))
+                    # Draw red markers on all 3 graphs of "Full overview"
+                    line1 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((255, 0, 0), width=5))
+                    line2 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((255, 0, 0), width=5))
+                    line3 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((255, 0, 0), width=5))
                     
-                    text = pg.TextItem(marker_name, color=(0, 255, 0), anchor=(0, 0.5), angle=90)
-                    text.setPos((s_sec + e_sec) / 2, 0)
+                    text1 = pg.TextItem(marker_name, color=(255, 0, 0), anchor=(0, 0.5), angle=90)
+                    text2 = pg.TextItem(marker_name, color=(255, 0, 0), anchor=(0, 0.5), angle=90)
+                    text3 = pg.TextItem(marker_name, color=(255, 0, 0), anchor=(0, 0.5), angle=90)
+                    
+                    text1.setPos((s_sec + e_sec) / 2, 0)
+                    text2.setPos((s_sec + e_sec) / 2, 0)
+                    text3.setPos((s_sec + e_sec) / 2, 0)
                     
                     is_visible = self.check_markers.isChecked()
-                    for item in [line1, line2, line3, text]:
+                    for item in [line1, line2, line3, text1, text2, text3]:
                         item.setVisible(is_visible)
 
                     main_tab.p1.addItem(line1)
-                    main_tab.p1.addItem(text)
+                    main_tab.p1.addItem(text1)
+                    
                     main_tab.p2.addItem(line2)
+                    main_tab.p2.addItem(text2)
+                    
                     main_tab.p3.addItem(line3)
-                    main_tab.session_markers.extend([line1, line2, line3, text])
+                    main_tab.p3.addItem(text3)
+                    
+                    main_tab.session_markers.extend([line1, line2, line3, text1, text2, text3])
                 else:
                     skipped_tabs.append(f"{target} ({s_sec:.0f}s - {e_sec:.0f}s)")
 
@@ -395,12 +429,15 @@ class Uran4App(QMainWindow):
 
     def run_analysis(self):
         """Run the signal processing pipeline."""
+        if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            return
+            
         active_tab = self.get_active_tab()
         if not active_tab:
             return
         
-        if active_tab.tab_name == MAIN_TAB_NAME:
-            return
+        # Proceed with analysis even if on the main tab (global view).
+        # Performance shortcuts will be handled inside the signal processing pipeline.
         
         idx = self.combo_band.currentIndex()
         if idx == 0:
@@ -426,7 +463,11 @@ class Uran4App(QMainWindow):
             n_sigmas = self.spin_sigmas.value()
             apply_smoothing = self.check_smooth.isChecked()
 
-            filtered_sig_downsampled, img_data_pooled = process_signal_pipeline(
+            self.set_widgets_enabled(False)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+
+            self.worker = SignalAnalysisWorker(
                 active_tab.raw_signal,
                 self.fs,
                 lowcut,
@@ -436,11 +477,31 @@ class Uran4App(QMainWindow):
                 apply_smoothing
             )
             
-            active_tab.update_filtered(filtered_sig_downsampled)
-            active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
-            
+            def on_finished(result):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
+                filtered_sig_downsampled, img_data_pooled = result
+                active_tab.update_filtered(filtered_sig_downsampled)
+                active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
+                
+                # If the user changed tabs while the worker was busy, run analysis for the new tab now
+                current_active_tab = self.get_active_tab()
+                if current_active_tab and current_active_tab != active_tab:
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, self.run_analysis)
+
+            def on_error(err_str):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
+                QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
+
+            self.worker.progress.connect(self.progress_bar.setValue)
+            self.worker.finished.connect(on_finished)
+            self.worker.error.connect(on_error)
+            self.worker.start()
+
         except Exception as e:
-            QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{str(e)}")
+            QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to start analysis:\n{str(e)}")
 
     def export_plots(self):
         active_tab = self.get_active_tab()
@@ -457,6 +518,9 @@ class Uran4App(QMainWindow):
 
     def run_spectral_analysis(self):
         """Run the full spectral-correlation analysis on the active source transit."""
+        if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            return
+            
         active_tab = self.get_active_tab()
         if not active_tab or active_tab.tab_name == MAIN_TAB_NAME:
             QMessageBox.warning(
@@ -483,50 +547,63 @@ class Uran4App(QMainWindow):
 
             signal_duration = len(df) / self.fs
 
-            band_results = {}
             bands = [
                 ('small', 1.0 / 150.0, 1.0 / 5.0),
                 ('large', 1.0 / 600.0, 1.0 / 150.0),
             ]
 
-            for band_key, lowcut, highcut in bands:
-                min_period = 1.0 / lowcut
-                if signal_duration < min_period:
-                    band_results[band_key] = None
-                    continue
+            self.set_widgets_enabled(False)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
 
-                band_results[band_key] = run_spectral_pipeline(
-                    pm_signals, self.fs, lowcut, highcut,
-                    window_size, n_sigmas, apply_smoothing,
-                )
-
+            self.worker = SpectralAnalysisWorker(
+                pm_signals, self.fs, signal_duration, bands,
+                window_size, n_sigmas, apply_smoothing
+            )
+            
             # Find the day tab and source name
             day_tab = self.tabs.currentWidget()
             if not isinstance(day_tab, QTabWidget):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
                 return
 
             inner_idx = day_tab.currentIndex()
             inner_name = day_tab.tabText(inner_idx)
             spectral_name = inner_name + SPECTRAL_TAB_SUFFIX
 
-            # Replace existing SpectralTab if present
-            for i in range(day_tab.count()):
-                if day_tab.tabText(i) == spectral_name:
-                    day_tab.removeTab(i)
-                    break
+            def on_finished(band_results):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
+                
+                # Replace existing SpectralTab if present
+                for i in range(day_tab.count()):
+                    if day_tab.tabText(i) == spectral_name:
+                        day_tab.removeTab(i)
+                        break
 
-            spectral_tab = SpectralTab(inner_name, band_results)
-            day_tab.addTab(spectral_tab, spectral_name)
-            day_tab.setCurrentWidget(spectral_tab)
+                spectral_tab = SpectralTab(inner_name, band_results)
+                day_tab.addTab(spectral_tab, spectral_name)
+                day_tab.setCurrentWidget(spectral_tab)
+                
+            def on_error(err_str):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
+                QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
+
+            self.worker.progress.connect(self.progress_bar.setValue)
+            self.worker.finished.connect(on_finished)
+            self.worker.error.connect(on_error)
+            self.worker.start()
 
         except Exception as e:
-            QMessageBox.critical(
-                self, MSG_SPECTRAL_ERROR_TITLE,
-                f"Spectral analysis failed:\n{str(e)}",
-            )
+            QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{str(e)}")
 
     def run_global_spectral_analysis(self):
         """Run spectral analysis on the full PM6 dataset (matches professor's 'Global' approach)."""
+        if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            return
+            
         if self.df_pm6 is None:
             QMessageBox.warning(self, MSG_SPECTRAL_NO_SOURCE_TITLE,
                                 "Load a PM6 file first.")
@@ -551,30 +628,54 @@ class Uran4App(QMainWindow):
 
             signal_duration = len(df) / self.fs
 
-            band_results = {}
             bands = [
                 ('small', 1.0 / 150.0, 1.0 / 5.0),
                 ('large', 1.0 / 600.0, 1.0 / 150.0),
             ]
-            for band_key, lowcut, highcut in bands:
-                band_results[band_key] = run_spectral_pipeline(
-                    pm_signals, self.fs, lowcut, highcut,
-                    window_size, n_sigmas, apply_smoothing,
-                )
 
-            # Place result as a top-level tab (not nested in a day group)
-            # Replace existing global spectral tab if present
-            for i in range(self.tabs.count()):
-                if self.tabs.tabText(i) == GLOBAL_SPECTRAL_TAB_NAME:
-                    self.tabs.removeTab(i)
-                    break
+            self.set_widgets_enabled(False)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
 
-            spectral_tab = SpectralTab("Global", band_results)
-            idx = self.tabs.addTab(spectral_tab, GLOBAL_SPECTRAL_TAB_NAME)
-            self.tabs.setCurrentIndex(idx)
+            self.worker = SpectralAnalysisWorker(
+                pm_signals, self.fs, signal_duration, bands,
+                window_size, n_sigmas, apply_smoothing
+            )
+
+            def on_finished(band_results):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
+                
+                # Place result as a top-level tab (not nested in a day group)
+                # Replace existing global spectral tab if present
+                for i in range(self.tabs.count()):
+                    if self.tabs.tabText(i) == GLOBAL_SPECTRAL_TAB_NAME:
+                        self.tabs.removeTab(i)
+                        break
+
+                spectral_tab = SpectralTab("Global", band_results)
+                idx = self.tabs.addTab(spectral_tab, GLOBAL_SPECTRAL_TAB_NAME)
+                self.tabs.setCurrentIndex(idx)
+                
+            def on_error(err_str):
+                self.set_widgets_enabled(True)
+                self.progress_bar.setVisible(False)
+                QMessageBox.critical(self, MSG_SPECTRAL_ERROR_TITLE, f"Global spectral analysis failed:\n{err_str}")
+
+            self.worker.progress.connect(self.progress_bar.setValue)
+            self.worker.finished.connect(on_finished)
+            self.worker.error.connect(on_error)
+            self.worker.start()
 
         except Exception as e:
             QMessageBox.critical(
                 self, MSG_SPECTRAL_ERROR_TITLE,
                 f"Global spectral analysis failed:\n{str(e)}",
             )
+
+    def closeEvent(self, event):
+        """Ensure any running background worker is safely terminated on app exit."""
+        if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        super().closeEvent(event)

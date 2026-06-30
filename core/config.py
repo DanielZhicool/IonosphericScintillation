@@ -15,11 +15,11 @@ TUKEY_ALPHA = 0.1
 
 # Frequency-Time Analysis (CWT)
 PCHIP_FACTOR = 3        # Upsampling multiplier
-CWT_NV = 128            # Voices per octave for wavelet transform
+CWT_NV = 256            # Voices per octave for wavelet transform
 MORSE_GAMMA = 3         # Wavelet symmetry
-MORSE_BETA = 20         # Wavelet time-bandwidth
-GAUSSIAN_SIGMA_FREQ = 0.0
-GAUSSIAN_SIGMA_TIME = 0.0
+MORSE_BETA = 30         # Wavelet time-bandwidth
+GAUSSIAN_SIGMA_FREQ = 1.0
+GAUSSIAN_SIGMA_TIME = 1.0
 CWT_DYNAMIC_RANGE_DB = 40.0
 
 # Spectral-Correlation Analysis (Steps 10-13)

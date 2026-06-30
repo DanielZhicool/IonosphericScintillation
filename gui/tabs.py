@@ -1,4 +1,5 @@
 import pyqtgraph as pg
+import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import QRectF
 
@@ -68,6 +69,7 @@ class SignalTab(QWidget):
     def set_channel(self, channel_name):
         self.current_channel = channel_name
         self.raw_signal = self.df_slice[channel_name].values
+            
         # Update title keeping tab name
         self.p1.setTitle(RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=channel_name))
         self.curve_raw.setData(self.time_sec, self.raw_signal)
@@ -80,7 +82,24 @@ class SignalTab(QWidget):
         self.curve_filtered.setData(self.time_sec, filtered_signal)
 
     def update_spectrogram(self, img_data, lowcut, highcut):
-        self.img_spec.setImage(img_data, autoLevels=True)
+        img_min = np.nanmin(img_data)
+        img_max = np.nanmax(img_data)
+        
+        if np.isnan(img_min) or np.isnan(img_max):
+            img_min, img_max = 0.0, 1.0
+            img_data = np.zeros_like(img_data)
+            
+        if img_max == img_min:
+            img_max = img_min + 1e-6  # Prevent division by zero in colormap
+        
+        # Set image WITHOUT autoLevels so pyqtgraph doesn't interfere
+        self.img_spec.setImage(img_data, autoLevels=False)
+        
+        # CRITICAL: The ColorBarItem owns the level state and overrides setImage(levels=...).
+        # We must set levels on the colorbar explicitly or the first render will use its
+        # default [0,1] range, causing solid purple (or yellow) until recalculate is pressed.
+        self.cbar.setLevels((img_min, img_max))
+        
         # Map image to its real frequency range
         freq_height = highcut - lowcut
         self.img_spec.setRect(QRectF(self.time_sec[0], lowcut, self.time_sec[-1]-self.time_sec[0], freq_height))

@@ -11,6 +11,13 @@ def load_pm6_data(filepath):
     df = pd.read_csv(filepath, sep=r'\s+', names=columns, header=30, encoding_errors='ignore')
     df['Datetime'] = pd.to_datetime(df['MJD'], unit='D', origin='1899-12-30')
     df['Time_sec'] = (df['Datetime'] - df['Datetime'].iloc[0]).dt.total_seconds()
+    
+    # Compute P-M interferometric differences
+    df['20 MHz Pol A (P-M)'] = df['P1_20A'] - df['M1_20A']
+    df['20 MHz Pol B (P-M)'] = df['P2_20B'] - df['M2_20B']
+    df['25 MHz Pol A (P-M)'] = df['P3_25A'] - df['M3_25A']
+    df['25 MHz Pol B (P-M)'] = df['P4_25B'] - df['M4_25B']
+    
     return df
 
 def parse_regi_with_time(filepath, pm6_start_dt):
