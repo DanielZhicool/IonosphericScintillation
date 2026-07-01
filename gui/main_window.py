@@ -25,19 +25,12 @@ from gui.constants import (
     MSG_SPECTRAL_ERROR_TITLE, SPECTRAL_TAB_SUFFIX,
     FILE_DIALOG_PM6_TITLE, FILE_DIALOG_REGI_TITLE,
     SAVE_FILE_DEFAULT_NAME, SAVE_FILE_FILTER,
-    MSG_CREATED_TABS_TEMPLATE
+    MSG_CREATED_TABS_TEMPLATE, CHANNELS
 )
 
 # Core parsers and signal processing
 from core.parsers import load_pm6_data, parse_regi_with_time, build_observation_sessions
 from core.signal_processing import fill_gap_with_red_noise, process_signal_pipeline
-
-CHANNELS = [
-    'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
-    'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B', 
-    '20 MHz Pol A (P-M)', '20 MHz Pol B (P-M)', 
-    '25 MHz Pol A (P-M)', '25 MHz Pol B (P-M)'
-]
 
 from gui.plotting import TimeAxisItem
 from gui.tabs import SignalTab
@@ -57,6 +50,8 @@ class Uran4App(QMainWindow):
         
         self.df_pm6 = None
         self.full_time = None
+        self.pm6_start_dt = None
+        self.sessions = []
         
         self.init_ui()
 
@@ -88,6 +83,11 @@ class Uran4App(QMainWindow):
         self.check_markers.setChecked(True)
         self.check_markers.stateChanged.connect(self.toggle_markers)
         self.check_markers.setEnabled(False)
+        
+        self.check_day_markers = QCheckBox("Show Day Markers")
+        self.check_day_markers.setChecked(True)
+        self.check_day_markers.stateChanged.connect(self.toggle_markers)
+        self.check_day_markers.setEnabled(False)
         
         # Noise cleaning controls
         self.spin_window = QSpinBox()
@@ -125,6 +125,10 @@ class Uran4App(QMainWindow):
         self.btn_export.clicked.connect(self.export_plots)
         self.btn_export.setEnabled(False)
 
+        self.btn_batch_export = QPushButton("Batch Export...")
+        self.btn_batch_export.clicked.connect(self.open_batch_export)
+        self.btn_batch_export.setEnabled(False)
+
         self.btn_spectral = QPushButton(BTN_SPECTRAL)
         self.btn_spectral.clicked.connect(self.run_spectral_analysis)
         self.btn_spectral.setEnabled(False)
@@ -132,6 +136,22 @@ class Uran4App(QMainWindow):
         self.btn_global_spectral = QPushButton(BTN_GLOBAL_SPECTRAL)
         self.btn_global_spectral.clicked.connect(self.run_global_spectral_analysis)
         self.btn_global_spectral.setEnabled(False)
+
+        # --- Tooltips ---
+        self.btn_load_pm6.setToolTip('Load the PM6 binary data file (.pm6)')
+        self.btn_load_logs.setToolTip('Load REGI log files to auto-detect observation sessions and create source tabs')
+        self.combo_channel.setToolTip('Select which receiver channel to display and analyze')
+        self.check_markers.setToolTip('Show/hide observation session markers on the Full Overview')
+        self.spin_window.setToolTip('Rolling window size (samples) for outlier detection and smoothing')
+        self.spin_sigmas.setToolTip('Outlier rejection threshold in standard deviations (sigma)')
+        self.check_smooth.setToolTip('Apply Savitzky-Golay smoothing after outlier removal')
+        self.btn_apply_noise.setToolTip('Replace the selected region (shaded area) with synthetic red noise')
+        self.combo_band.setToolTip('Frequency band for bandpass filtering and CWT spectrogram')
+        self.btn_analyze.setToolTip('Recalculate bandpass filter and spectrogram for the current tab')
+        self.btn_export.setToolTip('Export the current tab plots to a PNG image file')
+        self.btn_batch_export.setToolTip('Export multiple sources, dates, and channels to a folder')
+        self.btn_spectral.setToolTip('Run full spectral-correlation analysis on the current source transit')
+        self.btn_global_spectral.setToolTip('Run spectral analysis across all loaded source transits')
 
         # --- Layout Assembly with Group Boxes ---
         
@@ -149,6 +169,7 @@ class Uran4App(QMainWindow):
         layout_view.addWidget(QLabel(LABEL_DISPLAY_CHANNEL))
         layout_view.addWidget(self.combo_channel)
         layout_view.addWidget(self.check_markers)
+        layout_view.addWidget(self.check_day_markers)
         group_view.setLayout(layout_view)
         
         # 3. Signal Processing
@@ -177,6 +198,7 @@ class Uran4App(QMainWindow):
         group_export = QGroupBox("5. Export")
         layout_export = QVBoxLayout()
         layout_export.addWidget(self.btn_export)
+        layout_export.addWidget(self.btn_batch_export)
         group_export.setLayout(layout_export)
         
         # Add groups to main control layout
@@ -186,14 +208,20 @@ class Uran4App(QMainWindow):
         control_layout.addWidget(group_spectral)
         control_layout.addWidget(group_export)
         control_layout.addStretch()
+
+        # 6. Settings & Status
+        group_settings = QGroupBox("6. Settings & Status")
+        layout_settings = QVBoxLayout()
         self.btn_settings = QPushButton("⚙ Settings")
         self.btn_settings.clicked.connect(self.open_settings)
-        control_layout.addWidget(self.btn_settings)
-
+        self.btn_settings.setToolTip('Edit CWT, spectral, and processing hyperparameters')
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setRange(0, 100)
-        control_layout.addWidget(self.progress_bar)
+        layout_settings.addWidget(self.btn_settings)
+        layout_settings.addWidget(self.progress_bar)
+        group_settings.setLayout(layout_settings)
+        control_layout.addWidget(group_settings)
 
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.on_tab_changed)
@@ -233,12 +261,15 @@ class Uran4App(QMainWindow):
 
     def set_widgets_enabled(self, enabled=True):
         """Enable or disable the cleaning and export controls."""
+        self.btn_load_pm6.setEnabled(enabled)
         self.combo_channel.setEnabled(enabled)
         self.btn_load_logs.setEnabled(enabled)
         self.check_markers.setEnabled(enabled)
+        self.check_day_markers.setEnabled(enabled)
         self.btn_apply_noise.setEnabled(enabled)
         self.btn_analyze.setEnabled(enabled)
         self.btn_export.setEnabled(enabled)
+        self.btn_batch_export.setEnabled(enabled)
         self.spin_window.setEnabled(enabled)
         self.spin_sigmas.setEnabled(enabled)
         self.check_smooth.setEnabled(enabled)
@@ -255,12 +286,12 @@ class Uran4App(QMainWindow):
             self.full_time = self.df_pm6['Time_sec'].values
             
             # Extract exact PM6 start datetime
-            pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
+            self.pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
             
             self.tabs.clear()
             
             # Pass pm6_start_dt into the tab
-            main_tab = SignalTab(self.df_pm6, pm6_start_dt, tab_name=MAIN_TAB_NAME, fs=self.fs)
+            main_tab = SignalTab(self.df_pm6, self.pm6_start_dt, tab_name=MAIN_TAB_NAME, fs=self.fs)
             self.tabs.addTab(main_tab, MAIN_TAB_NAME)
             self.tabs.setCurrentWidget(main_tab)
             
@@ -288,7 +319,7 @@ class Uran4App(QMainWindow):
                 return
 
             pm6_max_sec = self.full_time[-1]
-            df_logs, calibrations, sessions = build_observation_sessions(df_logs, pm6_max_sec)
+            df_logs, calibrations, self.sessions = build_observation_sessions(df_logs, pm6_max_sec)
             
             for _, row in calibrations.iterrows():
                 s_idx = np.searchsorted(self.full_time, row['Start_sec'])
@@ -301,8 +332,40 @@ class Uran4App(QMainWindow):
             main_tab.update_raw(self.df_pm6)
 
             for item in main_tab.session_markers:
-                main_tab.p1.removeItem(item)
+                if item in main_tab.p1.items:
+                    main_tab.p1.removeItem(item)
+                if item in main_tab.p2.items:
+                    main_tab.p2.removeItem(item)
+                if item in main_tab.p3.items:
+                    main_tab.p3.removeItem(item)
             main_tab.session_markers.clear()
+            
+            if hasattr(main_tab, 'day_markers'):
+                for item in main_tab.day_markers:
+                    if item in main_tab.p1.items:
+                        main_tab.p1.removeItem(item)
+                    if item in main_tab.p2.items:
+                        main_tab.p2.removeItem(item)
+                    if item in main_tab.p3.items:
+                        main_tab.p3.removeItem(item)
+            main_tab.day_markers = []
+            
+            # Draw day markers
+            current_day = self.pm6_start_dt.normalize() + pd.Timedelta(days=1)
+            pm6_end_dt = self.pm6_start_dt + pd.to_timedelta(self.full_time[-1], unit='s')
+            
+            while current_day < pm6_end_dt:
+                sec_offset = (current_day - self.pm6_start_dt).total_seconds()
+                date_label = current_day.strftime('%Y-%m-%d')
+                
+                for p in [main_tab.p1, main_tab.p2, main_tab.p3]:
+                    day_line = pg.InfiniteLine(pos=sec_offset, angle=90, pen=pg.mkPen(100, 200, 255, 150, style=Qt.DashLine), label=date_label, labelOpts={'position': 0.05, 'color': (150, 220, 255), 'movable': False, 'fill': (0, 0, 0, 100)})
+                    day_line.setVisible(self.check_day_markers.isChecked())
+                    p.addItem(day_line)
+                    main_tab.day_markers.append(day_line)
+                    
+                current_day += pd.Timedelta(days=1)
+            
             
             # Remove old day tabs on new log load (keep only 0-th index "Full overview")
             while self.tabs.count() > 1:
@@ -314,15 +377,16 @@ class Uran4App(QMainWindow):
             current_daily_counters = defaultdict(int)
             
             # Pre-count to identify duplicate sources on the same day
-            for s in sessions:
+            for s in self.sessions:
                 s_sec = s['start']
-                session_dt = pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
+                session_dt = self.pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
                 date_str = session_dt.strftime('%d %b')
                 daily_target_counts[(date_str, s['target'])] += 1
 
             created_tabs, skipped_tabs = [], []
+            marker_index = 0  # Used to stagger label heights and avoid collision
 
-            for s in sessions:
+            for s in self.sessions:
                 target = s['target']
                 s_sec = s['start']
                 e_sec = s['end']
@@ -334,7 +398,7 @@ class Uran4App(QMainWindow):
                     df_slice = self.df_pm6.iloc[s_idx:e_idx].copy()
                     
                     # Get exact start date and time
-                    session_dt = pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
+                    session_dt = self.pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
                     date_str = session_dt.strftime('%d %b')  # Example: "04 Jan"
                     time_str = session_dt.strftime('%H:%M')  # Example: "17:59"
                     
@@ -356,37 +420,40 @@ class Uran4App(QMainWindow):
                         marker_name = f"{target} ({date_str})"
                         
                     # Create the plot and hide it inside the current day's tab
-                    target_tab = SignalTab(df_slice, pm6_start_dt, tab_name=marker_name, fs=self.fs)
+                    target_tab = SignalTab(df_slice, self.pm6_start_dt, tab_name=marker_name, fs=self.fs)
                     day_tab_widgets[date_str].addTab(target_tab, inner_tab_name)
                     created_tabs.append(marker_name)
 
                     # Draw red markers on all 3 graphs of "Full overview"
-                    line1 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((255, 0, 0), width=5))
-                    line2 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((255, 0, 0), width=5))
-                    line3 = pg.PlotDataItem([s_sec, e_sec], [0, 0], pen=pg.mkPen((255, 0, 0), width=5))
+                    marker_index += 1
+
+                    brush = pg.mkBrush(255, 0, 0, 30) # semi-transparent red
+                    line1 = pg.LinearRegionItem([s_sec, e_sec], movable=False, brush=brush, pen=None)
+                    line2 = pg.LinearRegionItem([s_sec, e_sec], movable=False, brush=brush, pen=None)
+                    line3 = pg.LinearRegionItem([s_sec, e_sec], movable=False, brush=brush, pen=None)
+
+                    # Short source name only (no date) to keep label concise
+                    short_name = inner_tab_name
                     
-                    text1 = pg.TextItem(marker_name, color=(255, 0, 0), anchor=(0, 0.5), angle=90)
-                    text2 = pg.TextItem(marker_name, color=(255, 0, 0), anchor=(0, 0.5), angle=90)
-                    text3 = pg.TextItem(marker_name, color=(255, 0, 0), anchor=(0, 0.5), angle=90)
+                    lbl_y_pos = 0.50
                     
-                    text1.setPos((s_sec + e_sec) / 2, 0)
-                    text2.setPos((s_sec + e_sec) / 2, 0)
-                    text3.setPos((s_sec + e_sec) / 2, 0)
-                    
+                    # Add label as an InfiniteLine at start boundary (force angle=90 to be vertical)
+                    lbl1 = pg.InfiniteLine(pos=s_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchor': (0.5, 0.5)})
+                    lbl2 = pg.InfiniteLine(pos=s_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchor': (0.5, 0.5)})
+
                     is_visible = self.check_markers.isChecked()
-                    for item in [line1, line2, line3, text1, text2, text3]:
+                    for item in [line1, line2, line3, lbl1, lbl2]:
                         item.setVisible(is_visible)
 
                     main_tab.p1.addItem(line1)
-                    main_tab.p1.addItem(text1)
-                    
+                    main_tab.p1.addItem(lbl1)
+
                     main_tab.p2.addItem(line2)
-                    main_tab.p2.addItem(text2)
-                    
+                    main_tab.p2.addItem(lbl2)
+
                     main_tab.p3.addItem(line3)
-                    main_tab.p3.addItem(text3)
-                    
-                    main_tab.session_markers.extend([line1, line2, line3, text1, text2, text3])
+
+                    main_tab.session_markers.extend([line1, line2, line3, lbl1, lbl2])
                 else:
                     skipped_tabs.append(f"{target} ({s_sec:.0f}s - {e_sec:.0f}s)")
 
@@ -406,9 +473,34 @@ class Uran4App(QMainWindow):
         """Toggle the visibility of session markers on the main plot."""
         if self.tabs.count() > 0:
             main_tab = self.tabs.widget(0)
-            is_visible = self.check_markers.isChecked()
+            
+            is_visible_sessions = self.check_markers.isChecked()
             for item in main_tab.session_markers:
-                item.setVisible(is_visible)
+                item.setVisible(is_visible_sessions)
+                
+            is_visible_days = self.check_day_markers.isChecked()
+            if hasattr(main_tab, 'day_markers'):
+                for item in main_tab.day_markers:
+                    item.setVisible(is_visible_days)
+
+    def open_batch_export(self):
+        if self.df_pm6 is None or not hasattr(self, 'sessions') or not self.sessions:
+            QMessageBox.warning(self, "Batch Export", "Load a PM6 file and REGI log first to extract sources.")
+            return
+
+        from gui.batch_export_dialog import BatchExportDialog
+        dialog = BatchExportDialog(
+            df_pm6=self.df_pm6,
+            sessions=self.sessions,
+            start_datetime=self.pm6_start_dt,
+            fs=self.fs,
+            window_size=self.spin_window.value(),
+            n_sigmas=self.spin_sigmas.value(),
+            apply_smoothing=self.check_smooth.isChecked(),
+            parent=self
+        )
+        dialog.exec()
+
     
     
     def manual_clean_region(self):
@@ -481,8 +573,11 @@ class Uran4App(QMainWindow):
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 filtered_sig_downsampled, img_data_pooled = result
-                active_tab.update_filtered(filtered_sig_downsampled)
-                active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
+                try:
+                    active_tab.update_filtered(filtered_sig_downsampled)
+                    active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
+                except RuntimeError:
+                    pass
                 
                 # If the user changed tabs while the worker was busy, run analysis for the new tab now
                 current_active_tab = self.get_active_tab()
@@ -505,16 +600,128 @@ class Uran4App(QMainWindow):
 
     def export_plots(self):
         active_tab = self.get_active_tab()
-        if not active_tab: return
+        if not active_tab:
+            return
 
-        filepath, _ = QFileDialog.getSaveFileName(self, "Export Plot", SAVE_FILE_DEFAULT_NAME, SAVE_FILE_FILTER)
-        if filepath:
-            try:
-                exporter = pg.exporters.ImageExporter(active_tab.graph_widget.scene())
-                exporter.parameters()['width'] = 1920
-                exporter.export(filepath)
-            except Exception as e:
-                QMessageBox.critical(self, MSG_SAVE_ERROR_TITLE, str(e))
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QComboBox, QLabel, QDialogButtonBox, QGroupBox
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        # --- Export options dialog ---
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Export Options")
+        dlg.resize(340, 280)
+        dlg_layout = QVBoxLayout(dlg)
+
+        group_graphs = QGroupBox("Include sub-graphs")
+        graph_layout = QVBoxLayout()
+        chk_raw = QCheckBox("Raw Signal")
+        chk_raw.setChecked(True)
+        chk_filtered = QCheckBox("Filtered Signal (Scintillations)")
+        chk_filtered.setChecked(True)
+        chk_spec = QCheckBox("Spectrogram")
+        chk_spec.setChecked(True)
+        graph_layout.addWidget(chk_raw)
+        graph_layout.addWidget(chk_filtered)
+        graph_layout.addWidget(chk_spec)
+        group_graphs.setLayout(graph_layout)
+        dlg_layout.addWidget(group_graphs)
+
+        group_fmt = QGroupBox("Format")
+        fmt_layout = QHBoxLayout()
+        fmt_layout.addWidget(QLabel("File format:"))
+        combo_fmt = QComboBox()
+        combo_fmt.addItems(["PNG (300 dpi)", "SVG (vector)"])
+        fmt_layout.addWidget(combo_fmt)
+        group_fmt.setLayout(fmt_layout)
+        dlg_layout.addWidget(group_fmt)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        dlg_layout.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        selected = []
+        if chk_raw.isChecked():
+            selected.append("raw")
+        if chk_filtered.isChecked():
+            selected.append("filtered")
+        if chk_spec.isChecked():
+            selected.append("spectrogram")
+
+        if not selected:
+            QMessageBox.warning(self, "Export", "No sub-graphs selected.")
+            return
+
+        # --- Build auto filename ---
+        source = active_tab.tab_name.replace(' ', '_').replace('/', '-')
+        channel = active_tab.current_channel
+        date_str = active_tab.start_datetime.strftime('%Y%m%d') if active_tab.start_datetime else 'unknown'
+        ext = ".svg" if "SVG" in combo_fmt.currentText() else ".png"
+        default_name = f"{source}_{date_str}_{channel}{ext}"
+
+        filepath, _ = QFileDialog.getSaveFileName(self, "Save Export", default_name,
+                                                   "PNG Images (*.png);;SVG Files (*.svg)")
+        if not filepath:
+            return
+
+        try:
+            n = len(selected)
+            fig, axes = plt.subplots(n, 1, figsize=(16, 4 * n), constrained_layout=True)
+            if n == 1:
+                axes = [axes]
+
+            ax_idx = 0
+            time_h = active_tab.time_sec / 3600.0
+
+            # Title with metadata
+            fig.suptitle(
+                f"{active_tab.tab_name}  |  {active_tab.start_datetime.strftime('%Y-%m-%d') if active_tab.start_datetime else ''}  |  {channel}",
+                fontsize=13, fontweight='bold'
+            )
+
+            if "raw" in selected:
+                ax = axes[ax_idx]; ax_idx += 1
+                ax.plot(time_h, active_tab.raw_signal, color='steelblue', linewidth=0.6)
+                ax.set_ylabel("Amplitude")
+                ax.set_title("Raw Signal")
+                ax.grid(True, alpha=0.3)
+
+            if "filtered" in selected:
+                ax = axes[ax_idx]; ax_idx += 1
+                filtered = active_tab.curve_filtered.getData()[1]
+                if filtered is not None and len(filtered) == len(time_h):
+                    ax.plot(time_h, filtered, color='seagreen', linewidth=0.6)
+                ax.set_ylabel("Amplitude")
+                ax.set_title("Filtered Signal (Scintillations)")
+                ax.grid(True, alpha=0.3)
+
+            if "spectrogram" in selected:
+                ax = axes[ax_idx]; ax_idx += 1
+                img = active_tab.img_spec.image
+                if img is not None:
+                    t0 = active_tab.time_sec[0] / 3600.0
+                    t1 = active_tab.time_sec[-1] / 3600.0
+                    rect = active_tab.img_spec.boundingRect()
+                    f0, f1 = rect.top(), rect.bottom()
+                    im = ax.imshow(img.T, aspect='auto', origin='lower',
+                                   extent=[t0, t1, f0, f1], cmap='viridis')
+                    plt.colorbar(im, ax=ax, label='Power (dB)')
+                ax.set_ylabel("Frequency (Hz)")
+                ax.set_title("CWT Spectrogram")
+
+            axes[-1].set_xlabel("Time (hours from start)")
+
+            dpi = 300 if ext == ".png" else 100
+            plt.savefig(filepath, dpi=dpi, bbox_inches='tight')
+            plt.close(fig)
+            QMessageBox.information(self, "Export Complete", f"Saved to:\n{filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, MSG_SAVE_ERROR_TITLE, str(e))
 
     def run_spectral_analysis(self):
         """Run the full spectral-correlation analysis on the active source transit."""
@@ -576,15 +783,18 @@ class Uran4App(QMainWindow):
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 
-                # Replace existing SpectralTab if present
-                for i in range(day_tab.count()):
-                    if day_tab.tabText(i) == spectral_name:
-                        day_tab.removeTab(i)
-                        break
-
-                spectral_tab = SpectralTab(inner_name, band_results)
-                day_tab.addTab(spectral_tab, spectral_name)
-                day_tab.setCurrentWidget(spectral_tab)
+                try:
+                    # Replace existing SpectralTab if present
+                    for i in range(day_tab.count()):
+                        if day_tab.tabText(i) == spectral_name:
+                            day_tab.removeTab(i)
+                            break
+    
+                    spectral_tab = SpectralTab(inner_name, band_results)
+                    day_tab.addTab(spectral_tab, spectral_name)
+                    day_tab.setCurrentWidget(spectral_tab)
+                except RuntimeError:
+                    pass
                 
             def on_error(err_str):
                 self.set_widgets_enabled(True)

@@ -65,3 +65,11 @@ SPECTRAL_CROSS_COLORS = {
     'Pol A': '#42A5F5',
     'Pol B': '#EF5350',
 }
+
+CHANNELS = [
+    'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
+    'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B', 
+    '20 MHz Pol A (P-M)', '20 MHz Pol B (P-M)', 
+    '25 MHz Pol A (P-M)', '25 MHz Pol B (P-M)'
+]
+

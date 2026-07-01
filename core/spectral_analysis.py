@@ -67,6 +67,10 @@ def compute_multitaper_psd(signal, fs, n_tapers=None, nw=None):
     if nw is None: nw = cfg.MTM_NW
     
     N = len(signal)
+    if N <= max(2 * nw, n_tapers):
+        freqs = np.fft.rfftfreq(N, d=1.0 / fs) if N > 0 else np.array([0.0])
+        return freqs, np.zeros_like(freqs)
+        
     sig = detrend(signal)
 
     tapers, eigenvalues = dpss(N, nw, n_tapers, return_ratios=True)
@@ -119,6 +123,11 @@ def compute_ftest(signal, fs, n_tapers=None, nw=None,
     if nw is None: nw = cfg.MTM_NW
     if confidence is None: confidence = cfg.FTEST_CONFIDENCE
     N = len(signal)
+    
+    if N <= max(2 * nw, n_tapers):
+        freqs = np.fft.rfftfreq(N, d=1.0 / fs) if N > 0 else np.array([0.0])
+        return freqs, np.zeros_like(freqs), 1.0, None
+        
     sig = detrend(signal)
 
     tapers = dpss(N, nw, n_tapers)
@@ -192,6 +201,12 @@ def compute_cross_spectrum(sig1, sig2, fs,
     if n_tapers is None: n_tapers = cfg.MTM_N_TAPERS
     if nw is None: nw = cfg.MTM_NW
     N = len(sig1)
+    
+    if N <= max(2 * nw, n_tapers):
+        freqs = np.fft.rfftfreq(N, d=1.0 / fs) if N > 0 else np.array([0.0])
+        z = np.zeros_like(freqs)
+        return freqs, z, z, z, z, z
+        
     assert len(sig2) == N, "Signals must have the same length"
 
     s1 = detrend(sig1)

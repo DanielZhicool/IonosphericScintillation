@@ -73,12 +73,25 @@ def fill_gap_with_red_noise(signal, start_idx, end_idx, context_window=200):
     
     length = end_idx - start_idx
     r = 0.95
-    white_noise = np.random.normal(0, 1, length)
     red_noise = np.zeros(length)
     
-    red_noise[0] = white_noise[0]
-    for i in range(1, length):
-        red_noise[i] = r * red_noise[i-1] + np.sqrt(1 - r**2) * white_noise[i]
+    # Process in chunks to prevent memory spikes on massive gaps
+    chunk_size = 1000000
+    zi = np.array([0.0]) # initial filter state
+    
+    from scipy.signal import lfilter
+    
+    for start in range(0, length, chunk_size):
+        end = min(start + chunk_size, length)
+        c_len = end - start
+        
+        white_noise = np.random.normal(0, 1, c_len) * np.sqrt(1 - r**2)
+        if start == 0:
+            white_noise[0] = white_noise[0] / np.sqrt(1 - r**2)
+            
+        c_red, zf = lfilter([1], [1, -r], white_noise, zi=zi)
+        red_noise[start:end] = c_red
+        zi = zf
         
     # Scale to target standard deviation and mean
     red_noise = (red_noise * target_std) + target_mean
@@ -160,53 +173,167 @@ def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
 
     print(f"[DEBUG] Running CWT with nv={nv}, gamma={cfg.MORSE_GAMMA}, beta={cfg.MORSE_BETA}, blur=({cfg.GAUSSIAN_SIGMA_FREQ}, {cfg.GAUSSIAN_SIGMA_TIME}), use_ssq={use_ssq}")
 
-    if use_ssq:
-        # Perform Synchrosqueezing (SWT) for sharp, high-res frequency representation
-        # We MUST compute all scales for synchrosqueezing to correctly reassign energy
-        Tw, Wx, freqs, _ = ssq_cwt(
-            processing_signal,
-            wavelet=morse_wavelet,
-            nv=nv,
-            fs=fs
-        )
-        Wx_abs = np.abs(Tw) # Use Synchrosqueezing matrix (Tw)
-        
-        # Extract requested frequency range after computation
-        valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
-        if len(valid_idx) > 0:
-            Wx_abs = Wx_abs[valid_idx, :]
-    else:
-        # Generate all scales
-        scales = make_scales(N, wavelet=morse_wavelet, nv=nv)
-        
-        # Filter scales to ONLY the frequency band of interest to save MASSIVE amounts of memory
-        fc = center_frequency(morse_wavelet)
-        freqs = fc / scales * fs
-        valid_idx = (freqs >= lowcut) & (freqs <= highcut)
-        scales = scales[valid_idx].astype(np.float64) # Ensure float64
-        
-        # Run standard CWT (skipping Synchrosqueezing step for stability on huge arrays)
-        Wx, _scales = cwt(
-            processing_signal,
-            wavelet=morse_wavelet,
-            scales=scales,
-            fs=fs
-        )
-        Wx_abs = np.abs(Wx) # Use standard CWT magnitude
-
-    # 2D Gaussian blur for visual smoothing
-    Wx_abs = gaussian_filter(Wx_abs, sigma=(cfg.GAUSSIAN_SIGMA_FREQ, cfg.GAUSSIAN_SIGMA_TIME))
-
-    # Apply Visual Contrast (Logarithmic Scale)
-    Wx_abs = np.maximum(Wx_abs, 1e-12) # avoid log(0)
-    Wx_db = 20 * np.log10(Wx_abs)
+    chunk_size = 32768
+    overlap = 16384  # Heavily increased overlap to completely eliminate CWT boundary artifacts
     
-    if use_ssq:
-        # Synchrosqueezing produces extreme edge artifacts. Use 99.9th percentile to prevent the dynamic range from being dragged up.
-        max_db = np.nanpercentile(Wx_db, 99.9)
+    # Aggressive UI compression to prevent memory errors. 
+    # Downsample time axis to max ~8000 pixels (plenty for any monitor).
+    pool_size = max(1, N // 8000)
+
+    def process_chunk(chunk_mag):
+        """Applies blur, contrast mapping, and pooling to a single chunk."""
+        # Local 2D Gaussian blur (boundary effects are tiny compared to overlap)
+        chunk_mag = gaussian_filter(chunk_mag, sigma=(cfg.GAUSSIAN_SIGMA_FREQ, cfg.GAUSSIAN_SIGMA_TIME))
+        # Log contrast
+        chunk_db = 20 * np.log10(np.maximum(chunk_mag, 1e-12))
+        return chunk_db
+
+    if N <= chunk_size:
+        # Run on full signal
+        if use_ssq:
+            Tw, Wx, freqs, _ = ssq_cwt(
+                processing_signal,
+                wavelet=morse_wavelet,
+                nv=nv,
+                fs=fs
+            )
+            Wx_abs = np.abs(Tw)
+            valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
+            if len(valid_idx) > 0:
+                Wx_abs = Wx_abs[valid_idx, :]
+            else:
+                Wx_abs = np.zeros((1, N))
+        else:
+            scales = make_scales(N, wavelet=morse_wavelet, nv=nv)
+            fc = center_frequency(morse_wavelet)
+            freqs = fc / scales * fs
+            valid_idx = (freqs >= lowcut) & (freqs <= highcut)
+            if not np.any(valid_idx):
+                Wx_abs = np.zeros((1, N))
+            else:
+                scales = scales[valid_idx].astype(np.float64)
+                Wx, _scales = cwt(
+                    processing_signal,
+                    wavelet=morse_wavelet,
+                    scales=scales,
+                    fs=fs
+                )
+                Wx_abs = np.abs(Wx)
+            
+        Wx_db = process_chunk(Wx_abs)
+        if pool_size > 1:
+            pad_len = (pool_size - (Wx_db.shape[1] % pool_size)) % pool_size
+            if pad_len > 0:
+                Wx_db = np.pad(Wx_db, ((0, 0), (0, pad_len)), constant_values=-np.inf)
+            Wx_db = Wx_db.reshape(Wx_db.shape[0], -1, pool_size).max(axis=2)
     else:
-        # Standard CWT has natural variance. Absolute max preserves the gradient (greenish lines instead of saturated yellow).
-        max_db = np.nanmax(Wx_db)
+        # Chunked processing to bound RAM usage
+        Wx_db_chunks = []
+        step = chunk_size - overlap
+        num_chunks = int(np.ceil((N - overlap) / step))
+        
+        valid_idx = None
+        scales = None
+        
+        unpooled_buffer = None
+        
+        for i in range(num_chunks):
+            start = i * step
+            end = start + chunk_size
+            
+            chunk = processing_signal[start:end]
+            actual_chunk_len = len(chunk)
+            
+            if actual_chunk_len < chunk_size:
+                padded_chunk = np.zeros(chunk_size)
+                padded_chunk[:actual_chunk_len] = chunk
+                chunk = padded_chunk
+            
+            if use_ssq:
+                Tw, _, freqs, _ = ssq_cwt(
+                    chunk,
+                    wavelet=morse_wavelet,
+                    nv=nv,
+                    fs=fs
+                )
+                Tw_abs = np.abs(Tw)
+                
+                if valid_idx is None:
+                    valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
+                
+                if len(valid_idx) == 0:
+                    chunk_mag = np.zeros((1, chunk_size))
+                else:
+                    chunk_mag = Tw_abs[valid_idx, :]
+            else:
+                if scales is None:
+                    scales_all = make_scales(chunk_size, wavelet=morse_wavelet, nv=nv)
+                    fc = center_frequency(morse_wavelet)
+                    freqs = fc / scales_all * fs
+                    valid_idx = (freqs >= lowcut) & (freqs <= highcut)
+                    
+                    if np.any(valid_idx):
+                        scales = scales_all[valid_idx].astype(np.float64)
+                    else:
+                        scales = np.array([])
+                
+                if len(scales) == 0:
+                    chunk_mag = np.zeros((1, chunk_size))
+                else:
+                    Wx, _scales = cwt(
+                        chunk,
+                        wavelet=morse_wavelet,
+                        scales=scales,
+                        fs=fs
+                    )
+                    chunk_mag = np.abs(Wx)
+            
+            # Process fully inside chunk!
+            chunk_db = process_chunk(chunk_mag)
+            
+            keep_start = 0 if i == 0 else overlap // 2
+            keep_end = actual_chunk_len if i == num_chunks - 1 else chunk_size - overlap // 2
+            
+            sliced_chunk = chunk_db[:, keep_start:keep_end]
+            
+            if pool_size > 1:
+                if unpooled_buffer is not None:
+                    sliced_chunk = np.concatenate([unpooled_buffer, sliced_chunk], axis=1)
+                
+                n_cols = sliced_chunk.shape[1]
+                n_poolable = (n_cols // pool_size) * pool_size
+                
+                if n_poolable > 0:
+                    poolable_db = sliced_chunk[:, :n_poolable]
+                    unpooled_buffer = sliced_chunk[:, n_poolable:]
+                    pooled = poolable_db.reshape(poolable_db.shape[0], -1, pool_size).max(axis=2)
+                    Wx_db_chunks.append(pooled)
+                else:
+                    unpooled_buffer = sliced_chunk
+            else:
+                Wx_db_chunks.append(sliced_chunk)
+                
+        # Flush the final unpooled buffer seamlessly
+        if pool_size > 1 and unpooled_buffer is not None and unpooled_buffer.shape[1] > 0:
+            pad_len = pool_size - unpooled_buffer.shape[1]
+            padded_buffer = np.pad(unpooled_buffer, ((0, 0), (0, pad_len)), constant_values=-np.inf)
+            pooled = padded_buffer.reshape(padded_buffer.shape[0], -1, pool_size).max(axis=2)
+            Wx_db_chunks.append(pooled)
+            
+        Wx_db = np.concatenate(Wx_db_chunks, axis=1)
+
+    # Dynamic Range Clipping
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        if np.all(np.isnan(Wx_db)):
+            max_db = 0.0
+        else:
+            if use_ssq:
+                # nanpercentile is extremely fast now since Wx_db is highly compressed
+                max_db = np.nanpercentile(Wx_db, 99.9)
+            else:
+                max_db = np.nanmax(Wx_db)
         
     Wx_contrast = np.clip(Wx_db, a_min=max_db - cfg.CWT_DYNAMIC_RANGE_DB, a_max=max_db)
     
@@ -236,13 +363,15 @@ def process_signal_pipeline(raw_signal, fs, lowcut, highcut, window_size=None, n
     
     # Performance shortcut for very long signals (e.g. Global View)
     N_orig = len(raw_signal)
-    actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= 50000 else 1
     
-    # Cap nv to prevent MemoryError on huge datasets (like Global View)
+    # Decide pchip factor
+    actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= 30000 else 1
+    
+    # Because compute_cwt_spectrogram now uses intelligent chunking,
+    # we can safely run Synchrosqueezing (use_ssq=True) and full nv 
+    # without any memory crashes, regardless of signal length.
+    should_use_ssq = True
     actual_nv = cfg.CWT_NV
-    if N_orig > 50000:
-        max_nv_for_ram = max(16, int(1e9 / (8 * N_orig * 5))) # rough estimate assuming 5 octaves
-        actual_nv = min(cfg.CWT_NV, max_nv_for_ram)
     
     # 2. PCHIP Upsampling (skipped if actual_pchip_factor == 1)
     if actual_pchip_factor > 1:
@@ -260,21 +389,9 @@ def process_signal_pipeline(raw_signal, fs, lowcut, highcut, window_size=None, n
     if progress_callback: progress_callback(40)
     
     # 4. Compute CWT at HIGH frequency (perfect phase detail)
-    # Use Synchrosqueezing only for short signals, it's too unstable and memory intensive for the global view
-    should_use_ssq = (N_orig <= 50000)
+    # Use Synchrosqueezing only for short signals to prevent MemoryErrors
     img_data = compute_cwt_spectrogram(filtered_sig, new_fs, lowcut, highcut, nv=actual_nv, use_ssq=should_use_ssq)
-    if progress_callback: progress_callback(85)
-    
-    # 5. Smart image compression (Max Pooling)
-    # Protect against dimension errors: take exactly N_orig * actual_pchip_factor points
-    img_data_exact = img_data[: N_orig * actual_pchip_factor, :]
-    
-    if actual_pchip_factor > 1:
-        # Collapse (N_orig * actual_pchip_factor) rows into N_orig rows, taking the maximum pixel
-        img_data_pooled = img_data_exact.reshape(N_orig, actual_pchip_factor, img_data_exact.shape[1]).max(axis=1)
-    else:
-        img_data_pooled = img_data_exact
-    
     if progress_callback: progress_callback(100)
     
-    return filtered_sig_downsampled, img_data_pooled
+    # Return directly, img_data is already optimally pooled internally!
+    return filtered_sig_downsampled, img_data
