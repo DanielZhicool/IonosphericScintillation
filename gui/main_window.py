@@ -436,10 +436,11 @@ class Uran4App(QMainWindow):
                     short_name = inner_tab_name
                     
                     lbl_y_pos = 0.50
+                    mid_sec = (s_sec + e_sec) / 2.0
                     
-                    # Add label as an InfiniteLine at start boundary (force angle=90 to be vertical)
-                    lbl1 = pg.InfiniteLine(pos=s_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchor': (0.5, 0.5)})
-                    lbl2 = pg.InfiniteLine(pos=s_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchor': (0.5, 0.5)})
+                    # Add label as an InfiniteLine at center (force angle=90 to be vertical)
+                    lbl1 = pg.InfiniteLine(pos=mid_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchors': [(0, 0.5), (0, 0.5)]})
+                    lbl2 = pg.InfiniteLine(pos=mid_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchors': [(0, 0.5), (0, 0.5)]})
 
                     is_visible = self.check_markers.isChecked()
                     for item in [line1, line2, line3, lbl1, lbl2]:
