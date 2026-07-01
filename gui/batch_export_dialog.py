@@ -195,16 +195,24 @@ class BatchExportWorker(QThread):
                                     T0 = res['ftest'].get(ch_name + '_T0', None)
                                     if T0:
                                         t2, t3 = T0/2.0, T0/3.0
-                                        ax.set_title(f"{ch_name}\nT0 = {T0:.1f} s | 2T: {t2:.1f} s | 3T: {t3:.1f} s", color='darkblue')
-                                        ax.axvline(T0, color='k', linewidth=1.5)
-                                        ax.axvline(t2, color='m', linestyle='--', alpha=0.5)
-                                        ax.axvline(t3, color='m', linestyle='--', alpha=0.5)
-                                        
-                                        # Add labels for the lines
+                                        title_str = f"{ch_name}\nT0 = {T0:.1f} s"
                                         y_max = max(vals) if len(vals) > 0 else threshold
+                                        
+                                        if min(periods) <= t2 <= max(periods):
+                                            title_str += f" | 2T: {t2:.1f} s"
+                                            ax.axvline(t2, color='m', linestyle='--', alpha=0.5)
+                                            ax.text(t2, threshold + (y_max - threshold)*0.1, '2T', color='m', ha='center', va='bottom', fontsize=9)
+                                            
+                                        if min(periods) <= t3 <= max(periods):
+                                            title_str += f" | 3T: {t3:.1f} s"
+                                            ax.axvline(t3, color='m', linestyle='--', alpha=0.5)
+                                            ax.text(t3, threshold + (y_max - threshold)*0.1, '3T', color='m', ha='center', va='bottom', fontsize=9)
+
+                                        ax.set_title(title_str, color='darkblue')
+                                        ax.axvline(T0, color='k', linewidth=1.5)
+                                        
+                                        # Add label for T0
                                         ax.text(T0, y_max, 'T0', color='k', ha='center', va='bottom', fontsize=10, fontweight='bold')
-                                        ax.text(t2, threshold + (y_max - threshold)*0.1, '2T', color='m', ha='center', va='bottom', fontsize=9)
-                                        ax.text(t3, threshold + (y_max - threshold)*0.1, '3T', color='m', ha='center', va='bottom', fontsize=9)
                                         
                                         t0_idx = int(np.argmin(np.abs(periods - T0)))
                                         if 0 <= t0_idx < len(vals):

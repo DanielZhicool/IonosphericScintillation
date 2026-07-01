@@ -193,9 +193,12 @@ class SpectralTab(QWidget):
             # Build the title
             if T0 is not None:
                 t2, t3 = T0 / 2.0, T0 / 3.0
-                title_html = (f"{label}<br>"
-                              f"<span style='color:#42A5F5; font-size:9pt;'>"
-                              f"T₀ = {T0:.1f} s | 2T: {t2:.1f} s | 3T: {t3:.1f} s</span>")
+                title_html = f"{label}<br><span style='color:#42A5F5; font-size:9pt;'>T₀ = {T0:.1f} s"
+                if p_min <= t2 <= p_max:
+                    title_html += f" | 2T: {t2:.1f} s"
+                if p_min <= t3 <= p_max:
+                    title_html += f" | 3T: {t3:.1f} s"
+                title_html += "</span>"
             else:
                 title_html = label
 
