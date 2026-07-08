@@ -420,7 +420,7 @@ class BatchExportDialog(QDialog):
     def __init__(self, df_pm6, df_pm6_original, sessions, start_datetime, fs, window_size, n_sigmas, apply_smoothing, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Batch Export")
-        self.resize(600, 500)
+        self.resize(700, 750)
         
         self.df_pm6 = df_pm6
         self.df_pm6_original = df_pm6_original

@@ -6,7 +6,7 @@ import traceback
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QFileDialog, 
                                QComboBox, QSplitter, QMessageBox, QTabWidget,
-                               QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QProgressBar)
+                               QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QProgressBar, QScrollArea, QApplication)
 from PySide6.QtCore import Qt
 from gui.constants import (
     APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
@@ -45,7 +45,7 @@ class Uran4App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1300, 850)
+        self.resize(1200, 750)
         self.fs = 1.0 
         
         self.df_pm6 = None
@@ -62,6 +62,10 @@ class Uran4App(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter)
 
+        control_scroll = QScrollArea()
+        control_scroll.setWidgetResizable(True)
+        control_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
         control_panel = QWidget()
         control_layout = QVBoxLayout(control_panel)
         
@@ -226,9 +230,11 @@ class Uran4App(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.on_tab_changed)
         
-        splitter.addWidget(control_panel)
+        control_scroll.setWidget(control_panel)
+        
+        splitter.addWidget(control_scroll)
         splitter.addWidget(self.tabs)
-        splitter.setSizes([300, 1000])
+        splitter.setSizes([320, 1000])
 
     def get_active_tab(self):
         current_widget = self.tabs.currentWidget()
@@ -606,6 +612,7 @@ class Uran4App(QMainWindow):
             self.set_widgets_enabled(False)
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
             self.worker = SignalAnalysisWorker(
                 active_tab.raw_signal,
@@ -618,6 +625,7 @@ class Uran4App(QMainWindow):
             )
             
             def on_finished(result):
+                QApplication.restoreOverrideCursor()
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 filtered_sig_downsampled, img_data_pooled = result
@@ -811,6 +819,7 @@ class Uran4App(QMainWindow):
             self.set_widgets_enabled(False)
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
             self.worker = SpectralAnalysisWorker(
                 pm_signals, self.fs, signal_duration, bands,
@@ -829,6 +838,7 @@ class Uran4App(QMainWindow):
             spectral_name = inner_name + SPECTRAL_TAB_SUFFIX
 
             def on_finished(band_results):
+                QApplication.restoreOverrideCursor()
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 
@@ -846,6 +856,7 @@ class Uran4App(QMainWindow):
                     pass
                 
             def on_error(err_str):
+                QApplication.restoreOverrideCursor()
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
@@ -895,6 +906,7 @@ class Uran4App(QMainWindow):
             self.set_widgets_enabled(False)
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
             self.worker = SpectralAnalysisWorker(
                 pm_signals, self.fs, signal_duration, bands,
@@ -902,6 +914,7 @@ class Uran4App(QMainWindow):
             )
 
             def on_finished(band_results):
+                QApplication.restoreOverrideCursor()
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 
@@ -917,6 +930,7 @@ class Uran4App(QMainWindow):
                 self.tabs.setCurrentIndex(idx)
                 
             def on_error(err_str):
+                QApplication.restoreOverrideCursor()
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 QMessageBox.critical(self, MSG_SPECTRAL_ERROR_TITLE, f"Global spectral analysis failed:\n{err_str}")

@@ -4,7 +4,7 @@ import core.config as cfg
 from PySide6.QtWidgets import (
     QDialog, QWidget, QFormLayout, QDoubleSpinBox, QSpinBox,
     QPushButton, QVBoxLayout, QHBoxLayout, QScrollArea, QMessageBox,
-    QComboBox, QLabel, QFileDialog, QGroupBox
+    QComboBox, QLabel, QFileDialog, QGroupBox, QDialogButtonBox
 )
 
 # ---------------------------------------------------------------------------
@@ -44,24 +44,33 @@ class SettingsDialog(QDialog):
 
         # --- Preset bar ---
         group_preset = QGroupBox("Presets")
-        preset_layout = QHBoxLayout()
+        preset_layout = QVBoxLayout()
+        
+        # 1. Built-in presets
+        row_builtin = QHBoxLayout()
         self.combo_preset = QComboBox()
-        self.combo_preset.addItems(list(_BUILTIN_PRESETS.keys()))
-        self.combo_preset.setToolTip("Select a built-in preset to populate the fields below")
-        btn_load_preset = QPushButton("Load")
-        btn_load_preset.setToolTip("Apply selected preset values to the form")
-        btn_load_preset.clicked.connect(self._load_preset)
+        self.combo_preset.addItems(["Custom"] + list(_BUILTIN_PRESETS.keys()))
+        self.combo_preset.model().item(0).setEnabled(False)
+        self.combo_preset.setToolTip("Select a built-in preset to instantly populate the fields below")
+        self.combo_preset.currentIndexChanged.connect(self._load_preset)
+        
+        row_builtin.addWidget(QLabel("Preset:"))
+        row_builtin.addWidget(self.combo_preset, stretch=1)
+        preset_layout.addLayout(row_builtin)
+        
+        # 2. File operations
+        row_file = QHBoxLayout()
         btn_save_file = QPushButton("Save to file…")
         btn_save_file.setToolTip("Save current form values as a JSON preset file")
         btn_save_file.clicked.connect(self._save_to_file)
         btn_load_file = QPushButton("Load from file…")
         btn_load_file.setToolTip("Load a previously saved JSON preset file")
         btn_load_file.clicked.connect(self._load_from_file)
-        preset_layout.addWidget(QLabel("Preset:"))
-        preset_layout.addWidget(self.combo_preset, stretch=1)
-        preset_layout.addWidget(btn_load_preset)
-        preset_layout.addWidget(btn_save_file)
-        preset_layout.addWidget(btn_load_file)
+        
+        row_file.addWidget(btn_save_file)
+        row_file.addWidget(btn_load_file)
+        preset_layout.addLayout(row_file)
+        
         group_preset.setLayout(preset_layout)
         layout.addWidget(group_preset)
 
@@ -93,9 +102,12 @@ class SettingsDialog(QDialog):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
-        btn_apply = QPushButton("Apply Settings")
-        btn_apply.clicked.connect(self.apply_settings)
-        layout.addWidget(btn_apply)
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.apply_settings)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+        
+        self._match_current_config_to_preset()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -105,6 +117,7 @@ class SettingsDialog(QDialog):
         sb.setRange(min_val, max_val)
         sb.setValue(int(current_val))
         sb.setSingleStep(step)
+        sb.valueChanged.connect(self._on_field_edited)
         self.form_layout.addRow(label, sb)
         self.inputs[name] = sb
 
@@ -114,6 +127,7 @@ class SettingsDialog(QDialog):
         sb.setValue(float(current_val))
         sb.setSingleStep(step)
         sb.setDecimals(3)
+        sb.valueChanged.connect(self._on_field_edited)
         self.form_layout.addRow(label, sb)
         self.inputs[name] = sb
 
@@ -123,9 +137,42 @@ class SettingsDialog(QDialog):
 
     def _apply_values(self, values: dict):
         """Populate form widgets from a dict (ignores unknown keys)."""
+        # Block signals globally so setting values doesn't trigger _on_field_edited
+        for widget in self.inputs.values():
+            widget.blockSignals(True)
+            
         for name, val in values.items():
             if name in self.inputs:
                 self.inputs[name].setValue(val)
+                
+        for widget in self.inputs.values():
+            widget.blockSignals(False)
+
+    def _on_field_edited(self):
+        """When a user manually edits a field, switch dropdown to Custom."""
+        self.combo_preset.blockSignals(True)
+        self.combo_preset.setCurrentText("Custom")
+        self.combo_preset.blockSignals(False)
+
+    def _match_current_config_to_preset(self):
+        """Check if current form values exactly match any preset, and update the dropdown."""
+        current_vals = self._current_values()
+        for preset_name, preset_vals in _BUILTIN_PRESETS.items():
+            match = True
+            for k, v in preset_vals.items():
+                if k not in current_vals or abs(current_vals[k] - v) > 1e-5:
+                    match = False
+                    break
+            if match:
+                self.combo_preset.blockSignals(True)
+                self.combo_preset.setCurrentText(preset_name)
+                self.combo_preset.blockSignals(False)
+                return
+                
+        # No match found, set to Custom
+        self.combo_preset.blockSignals(True)
+        self.combo_preset.setCurrentText("Custom")
+        self.combo_preset.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Preset actions
