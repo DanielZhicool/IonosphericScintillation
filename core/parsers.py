@@ -2,10 +2,18 @@ import pandas as pd
 import numpy as np
 import re
 
-from core.config import SIDEREAL_DAY
+import core.config as cfg
 
-def load_pm6_data(filepath):
-    """Load PM6 data and convert Excel date to datetime."""
+def load_pm6_data(filepath: str) -> pd.DataFrame:
+    """
+    Load PM6 data and convert the Excel date format to datetime.
+
+    Args:
+        filepath: Path to the PM6 text file.
+
+    Returns:
+        DataFrame containing parsed PM6 data with computed P-M interferometric differences.
+    """
     columns = ['MJD', 'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
                'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
     df = pd.read_csv(filepath, sep=r'\s+', names=columns, header=30, encoding_errors='ignore')
@@ -20,15 +28,21 @@ def load_pm6_data(filepath):
     
     return df
 
-def parse_regi_with_time(filepath, pm6_start_dt):
+def parse_regi_with_time(filepath: str, pm6_start_dt: pd.Timestamp) -> pd.DataFrame:
     """
-    Robust parser: reads log file with regex, handles midnight rollovers,
-    and returns a DataFrame with times in seconds.
+    Reads a log file with regex, handles midnight rollovers, and returns a DataFrame with times in seconds.
+
+    Args:
+        filepath: Path to the registration log file.
+        pm6_start_dt: The starting timestamp of the corresponding PM6 observation.
+
+    Returns:
+        DataFrame containing chronologically sorted log events.
     """
     events = []
     
     # Pattern: captures start (HH:MM), end in parentheses, and target name
-    log_pattern = re.compile(r'^(\d{1,2}:\d{2})\s*-?\s*\((\d{1,2}:\d{2})\).*?(\S+)$')
+    log_pattern = re.compile(r'^(\d{1,2}:\d{1,2})\s*-?\s*\((\d{1,2}:\d{1,2})\).*?(\S+)$')
 
     with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
@@ -70,7 +84,7 @@ def parse_regi_with_time(filepath, pm6_start_dt):
             start_secs.append((s_dt - pm6_start_dt).total_seconds())
             end_secs.append((e_dt - pm6_start_dt).total_seconds())
             last_dt = s_dt 
-        except Exception as e:
+        except (ValueError, TypeError):
             start_secs.append(np.nan)
             end_secs.append(np.nan)
             
@@ -80,7 +94,7 @@ def parse_regi_with_time(filepath, pm6_start_dt):
     return df_logs.dropna()
 
 
-def build_observation_sessions(df_logs, pm6_max_sec):
+def build_observation_sessions(df_logs: pd.DataFrame, pm6_max_sec: float) -> tuple[pd.DataFrame, pd.DataFrame, list]:
     """
     Projects logs across sidereal days and groups them into contiguous sessions.
     
@@ -89,22 +103,27 @@ def build_observation_sessions(df_logs, pm6_max_sec):
     Radio sources shift by exactly this amount every day relative to solar time.
     If the PM6 file is longer than the log, we multiply the schedule forward.
     
+    Args:
+        df_logs: DataFrame containing parsed log events.
+        pm6_max_sec: Maximum time length in seconds of the PM6 file.
+
     Returns: 
-        df_logs (DataFrame): Projected logs.
-        calibrations (DataFrame): Calibration blocks.
-        sessions (list): Chronological observation sessions.
+        Tuple containing:
+        - df_logs: Projected logs.
+        - calibrations: Calibration blocks.
+        - sessions: Chronological observation sessions.
     """
     original_logs = df_logs.copy()
     max_log_sec = original_logs['End_sec'].max()
     
     if pm6_max_sec > max_log_sec:
-        days_to_add = int(np.ceil((pm6_max_sec - max_log_sec) / SIDEREAL_DAY))
+        days_to_add = int(np.ceil((pm6_max_sec - max_log_sec) / cfg.SIDEREAL_DAY))
         projected_dfs = [original_logs]
         
         for day in range(1, days_to_add + 1):
             df_shifted = original_logs.copy()
-            df_shifted['Start_sec'] += day * SIDEREAL_DAY
-            df_shifted['End_sec'] += day * SIDEREAL_DAY
+            df_shifted['Start_sec'] += day * cfg.SIDEREAL_DAY
+            df_shifted['End_sec'] += day * cfg.SIDEREAL_DAY
             projected_dfs.append(df_shifted)
             
         df_logs = pd.concat(projected_dfs, ignore_index=True)
@@ -123,7 +142,7 @@ def build_observation_sessions(df_logs, pm6_max_sec):
         
         for i in range(1, len(obs_logs)):
             row = obs_logs.iloc[i]
-            is_same_session = (row['Target_Name'] == current_target) and (row['Start_sec'] - current_end < 3600)
+            is_same_session = (row['Target_Name'] == current_target) and (row['Start_sec'] - current_end < cfg.SESSION_MERGE_GAP)
             
             if is_same_session:
                 current_end = max(current_end, row['End_sec'])

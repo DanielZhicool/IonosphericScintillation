@@ -5,6 +5,7 @@ experimentation, testing and documentation.
 
 # Session parsing
 GAP_THRESHOLD = 3600  # seconds
+SESSION_MERGE_GAP = 8000  # seconds – max gap between consecutive transits of the same source to merge them into one session
 SIDEREAL_DAY = 86164  # seconds (23h 56m 4s)
 
 # Signal cleaning
@@ -14,7 +15,8 @@ SAVGOL_POLYORDER = 2
 TUKEY_ALPHA = 0.1
 
 # Frequency-Time Analysis (CWT)
-PCHIP_FACTOR = 3        # Upsampling multiplier
+PCHIP_FACTOR = 3               # Upsampling multiplier
+PCHIP_LONG_SIGNAL_THRESHOLD = 30000  # Skip PCHIP upsampling above this sample count to save memory/time
 CWT_NV = 256            # Voices per octave for wavelet transform
 MORSE_GAMMA = 3         # Wavelet symmetry
 MORSE_BETA = 30         # Wavelet time-bandwidth

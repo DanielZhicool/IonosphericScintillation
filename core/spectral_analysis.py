@@ -20,12 +20,8 @@ from core.signal_processing import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Internal helper
-# ---------------------------------------------------------------------------
-
-def _prepare_signal(raw_signal, fs, lowcut, highcut,
-                    window_size, n_sigmas, apply_smoothing):
+def _prepare_signal(raw_signal: np.ndarray, fs: float, lowcut: float, highcut: float,
+                    window_size: int, n_sigmas: float, apply_smoothing: bool) -> tuple[np.ndarray, float]:
     """Clean and bandpass-filter a signal for spectral analysis.
 
     Note: No PCHIP upsampling is applied here — unlike CWT, FFT-based
@@ -42,11 +38,7 @@ def _prepare_signal(raw_signal, fs, lowcut, highcut,
     return filtered, fs
 
 
-# ---------------------------------------------------------------------------
-# Step 10: Thomson Multitaper PSD
-# ---------------------------------------------------------------------------
-
-def compute_multitaper_psd(signal, fs, n_tapers=None, nw=None):
+def compute_multitaper_psd(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float = None) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute power spectral density using Thomson's Multitaper method.
 
@@ -95,12 +87,8 @@ def compute_multitaper_psd(signal, fs, n_tapers=None, nw=None):
     return freqs, psd
 
 
-# ---------------------------------------------------------------------------
-# Step 11: Thomson F-Test
-# ---------------------------------------------------------------------------
-
-def compute_ftest(signal, fs, n_tapers=None, nw=None,
-                  confidence=None, lowcut=None, highcut=None):
+def compute_ftest(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float = None,
+                  confidence: float = None, lowcut: float = None, highcut: float = None) -> tuple[np.ndarray, np.ndarray, float, float]:
     """
     Thomson F-test for detecting deterministic harmonic components.
 
@@ -173,12 +161,8 @@ def compute_ftest(signal, fs, n_tapers=None, nw=None,
     return freqs, f_stat, threshold, T0
 
 
-# ---------------------------------------------------------------------------
-# Step 12: Multitaper Cross-Spectrum
-# ---------------------------------------------------------------------------
-
-def compute_cross_spectrum(sig1, sig2, fs,
-                           n_tapers=None, nw=None):
+def compute_cross_spectrum(sig1: np.ndarray, sig2: np.ndarray, fs: float,
+                           n_tapers: int = None, nw: float = None) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Multitaper cross-spectral analysis between two signals.
 
@@ -239,12 +223,8 @@ def compute_cross_spectrum(sig1, sig2, fs,
     return freqs, cross_power, phase, coherence, real_part, imag_part
 
 
-# ---------------------------------------------------------------------------
-# Step 13: Peak Detection & Velocity Estimation
-# ---------------------------------------------------------------------------
-
-def find_spectral_peaks(power, freqs, lowcut_hz, highcut_hz,
-                        n_peaks=None):
+def find_spectral_peaks(power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, highcut_hz: float,
+                        n_peaks: int = None) -> tuple[list[float], list[float]]:
     """
     Find the *n_peaks* strongest spectral peaks within a frequency band.
 
@@ -273,8 +253,8 @@ def find_spectral_peaks(power, freqs, lowcut_hz, highcut_hz,
     return peaks[sorted_idx[:n_peaks]]
 
 
-def estimate_velocities(cross_phase_deg, freqs, peak_indices,
-                        dx=None):
+def estimate_velocities(cross_phase_deg: np.ndarray, freqs: np.ndarray, peak_indices: list[float],
+                        dx: float = None) -> list[dict]:
     """
     Convert cross-spectral phase at peak frequencies to horizontal
     ionospheric drift velocities.
@@ -315,12 +295,10 @@ def estimate_velocities(cross_phase_deg, freqs, peak_indices,
     return results
 
 
-# ---------------------------------------------------------------------------
-# Pipeline orchestrator
-# ---------------------------------------------------------------------------
+from typing import Callable, Optional
 
-def run_spectral_pipeline(pm_signals, fs, lowcut, highcut,
-                          window_size, n_sigmas, apply_smoothing, progress_callback=None):
+def run_spectral_pipeline(pm_signals: dict[str, np.ndarray], fs: float, lowcut: float, highcut: float,
+                          window_size: int, n_sigmas: float, apply_smoothing: bool, progress_callback: Optional[Callable[[int], None]] = None) -> dict:
     """
     Full spectral-correlation analysis pipeline for **one** frequency band.
 
@@ -375,6 +353,7 @@ def run_spectral_pipeline(pm_signals, fs, lowcut, highcut,
         ftest_results[ch_name + '_T0'] = T0
         threshold = thresh
     ftest_results['threshold'] = threshold
+    ftest_results['confidence'] = cfg.FTEST_CONFIDENCE
 
     if progress_callback: progress_callback(75)
 

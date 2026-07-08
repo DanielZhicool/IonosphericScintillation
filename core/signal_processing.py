@@ -1,27 +1,32 @@
+import warnings
+from typing import Callable, Optional
+
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt, sosfiltfilt, savgol_filter, detrend
+from scipy.signal import butter, sosfiltfilt, savgol_filter, detrend, lfilter
 from scipy.signal.windows import tukey
 from scipy.interpolate import pchip_interpolate
 from scipy.ndimage import gaussian_filter
 from ssqueezepy import ssq_cwt, cwt, Wavelet
 from ssqueezepy.utils import make_scales
-from ssqueezepy.wavelets import center_frequency  
+from ssqueezepy.wavelets import center_frequency
 
 import core.config as cfg
 
 
-def clean_and_smooth_signal(signal, window_size=None, n_sigmas=None, apply_smoothing=True, polyorder=None):
+def clean_and_smooth_signal(signal: np.ndarray, window_size: int = None, n_sigmas: float = None, apply_smoothing: bool = True, polyorder: int = None) -> np.ndarray:
     """
-    Clean radio-astronomy signal:
-    - Remove spikes/clusters (Hampel-like)
-    - Optional Savitzky-Golay smoothing
+    Clean a radio-astronomy signal by removing spikes/clusters and applying smoothing.
 
-    Params:
-    signal (array): 1D numpy array
-    window_size (int): odd window length for rolling operations
-    n_sigmas (float): outlier threshold in sigma units
-    apply_smoothing (bool): apply Savitzky-Golay smoothing
+    Args:
+        signal: 1D numpy array representing the signal data.
+        window_size: Odd window length for rolling operations. Defaults to cfg.DEFAULT_WINDOW_SIZE.
+        n_sigmas: Outlier threshold in sigma units. Defaults to cfg.DEFAULT_N_SIGMAS.
+        apply_smoothing: Whether to apply Savitzky-Golay smoothing.
+        polyorder: Polynomial order for Savitzky-Golay filter. Defaults to cfg.SAVGOL_POLYORDER.
+
+    Returns:
+        1D numpy array of the cleaned and smoothed signal.
     """
     if window_size is None: window_size = cfg.DEFAULT_WINDOW_SIZE
     if n_sigmas is None: n_sigmas = cfg.DEFAULT_N_SIGMAS
@@ -29,8 +34,10 @@ def clean_and_smooth_signal(signal, window_size=None, n_sigmas=None, apply_smoot
     s = pd.Series(signal)
     
     # Step 1: Outlier detection (Hampel-like)
-    rolling_median = s.rolling(window=window_size, center=True).median()
-    rolling_mad = 1.4826 * (s - rolling_median).abs().rolling(window=window_size, center=True).median()
+    # min_periods=1 ensures edge samples are still tested (otherwise the rolling
+    # window is NaN at both ends, silently missing outliers there).
+    rolling_median = s.rolling(window=window_size, center=True, min_periods=1).median()
+    rolling_mad = 1.4826 * (s - rolling_median).abs().rolling(window=window_size, center=True, min_periods=1).median()
     outliers = (s - rolling_median).abs() > (n_sigmas * rolling_mad)
     
     cleaned_s = s.copy()
@@ -48,75 +55,123 @@ def clean_and_smooth_signal(signal, window_size=None, n_sigmas=None, apply_smoot
     return cleaned_signal
 
 
-def fill_gap_with_red_noise(signal, start_idx, end_idx, context_window=200):
+def fill_gap_with_red_noise(
+    signal: np.ndarray,
+    start_idx: int,
+    end_idx: int,
+    context_window: int = 200,
+    seed: Optional[int] = None,
+) -> np.ndarray:
     """
-    Replaces a segment of the signal [start_idx:end_idx] with generated red noise.
-    The generated noise matches the mean and standard deviation of the surrounding context.
-    It uses a linear correction (Brownian bridge) to perfectly seamlessly connect 
-    both edges of the gap to the surrounding valid signal, preventing any visual jumps.
+    Replaces a segment of the signal with generated red noise.
+
+    The generated noise matches the median and MAD-estimated standard deviation of
+    the surrounding context.  The edges are blended with a cosine cross-fade so the
+    join is seamless *and* the interior retains the correct f^-2 spectral shape
+    (a linear ramp would inject low-frequency power and bias the spectrum).
+
+    Args:
+        signal: 1D numpy array representing the signal.
+        start_idx: Start index of the gap.
+        end_idx: End index of the gap (exclusive).
+        context_window: Number of samples on each side to use for statistics.
+        seed: Optional integer seed for the random-number generator.  Pass an
+              explicit value to make gap-filling reproducible across runs.
+
+    Returns:
+        1D numpy array with the gap filled.
     """
     signal_cleaned = signal.copy()
     N = len(signal_cleaned)
-    
+
     if start_idx >= end_idx or start_idx < 0 or end_idx > N:
         return signal_cleaned
-        
+
     left_context = signal_cleaned[max(0, start_idx - context_window) : start_idx]
     right_context = signal_cleaned[end_idx : min(N, end_idx + context_window)]
-    
+
     valid_context = np.concatenate([left_context, right_context])
     if len(valid_context) == 0:
-        return signal_cleaned 
-        
-    target_mean = np.mean(valid_context)
-    target_std = np.std(valid_context)
-    
+        return signal_cleaned
+
+    target_mean = np.median(valid_context)
+    mad = np.median(np.abs(valid_context - target_mean))
+    target_std = 1.4826 * mad if mad > 0 else 1.0
+
     length = end_idx - start_idx
     r = 0.95
     red_noise = np.zeros(length)
-    
-    # Process in chunks to prevent memory spikes on massive gaps
-    chunk_size = 1000000
-    zi = np.array([0.0]) # initial filter state
-    
-    from scipy.signal import lfilter
-    
-    for start in range(0, length, chunk_size):
-        end = min(start + chunk_size, length)
-        c_len = end - start
-        
-        white_noise = np.random.normal(0, 1, c_len) * np.sqrt(1 - r**2)
-        if start == 0:
+
+    # Use a local Generator so we don't pollute / depend on global random state.
+    # Passing seed=<int> makes gap-filling fully reproducible.
+    rng = np.random.default_rng(seed)
+
+    # Generate AR(1) red noise in chunks to bound memory on very large gaps.
+    chunk_size = 1_000_000
+    zi = np.array([0.0])  # initial filter state
+
+    for chunk_start in range(0, length, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, length)
+        c_len = chunk_end - chunk_start
+
+        white_noise = rng.standard_normal(c_len) * np.sqrt(1 - r**2)
+        if chunk_start == 0:
+            # Pre-scale the very first sample to the stationary std so the
+            # AR(1) chain starts at its steady-state variance, not at 0.
             white_noise[0] = white_noise[0] / np.sqrt(1 - r**2)
-            
+
         c_red, zf = lfilter([1], [1, -r], white_noise, zi=zi)
-        red_noise[start:end] = c_red
+        red_noise[chunk_start:chunk_end] = c_red
         zi = zf
-        
-    # Scale to target standard deviation and mean
-    red_noise = (red_noise * target_std) + target_mean
-    
-    # Boundary constraints to make it perfectly seamless
+
+    # Standardise then rescale to match surrounding context statistics.
+    rn_std = np.std(red_noise)
+    if rn_std > 0:
+        red_noise = (red_noise - np.mean(red_noise)) / rn_std
+    red_noise = red_noise * target_std + target_mean
+
+    # Boundary blend: cosine cross-fade instead of a linear ramp.
+    # A linear ramp injects a deterministic trend whose power concentrates at
+    # low frequencies, distorting the f^-2 spectral shape for long gaps.
+    # The cosine fade limits the correction to a short fringe at each edge,
+    # leaving the interior noise statistics intact.
     left_val = signal_cleaned[start_idx - 1] if start_idx > 0 else red_noise[0]
     right_val = signal_cleaned[end_idx] if end_idx < N else red_noise[-1]
-    
-    left_err = left_val - red_noise[0]
-    right_err = right_val - red_noise[-1]
-    
-    # Linearly interpolate the offset so the edges lock in perfectly
-    correction = np.linspace(left_err, right_err, length)
-    red_noise += correction
-    
+
+    blend_len = min(32, length // 4)  # fade zone: up to 32 samples or 25% of gap
+
+    if blend_len > 0:
+        # Left fade: smoothly force red_noise[0] -> left_val over blend_len samples
+        t_left = np.linspace(0.0, 1.0, blend_len)
+        left_weight = 0.5 * (1.0 + np.cos(np.pi * t_left))  # 1 -> 0
+        red_noise[:blend_len] = (
+            left_weight * left_val + (1.0 - left_weight) * red_noise[:blend_len]
+        )
+
+        # Right fade: smoothly force red_noise[-1] -> right_val
+        t_right = np.linspace(0.0, 1.0, blend_len)
+        right_weight = 0.5 * (1.0 + np.cos(np.pi * t_right[::-1]))  # 0 -> 1
+        red_noise[-blend_len:] = (
+            right_weight * right_val + (1.0 - right_weight) * red_noise[-blend_len:]
+        )
+
     signal_cleaned[start_idx:end_idx] = red_noise
     return signal_cleaned
 
 
-def upsample_pchip(signal, fs, factor=None):
+def upsample_pchip(signal: np.ndarray, fs: float, factor: int = None) -> tuple[np.ndarray, float]:
     """
-    Upsamples the signal using PCHIP interpolation.
+    Upsamples a signal using PCHIP interpolation.
+
     PCHIP is chosen to prevent overshoot (ringing artifacts) common in splines.
+
+    Args:
+        signal: 1D numpy array of the input signal.
+        fs: Original sampling frequency in Hz.
+        factor: Upsampling multiplier. Defaults to cfg.PCHIP_FACTOR.
+
     Returns:
-    upsampled_signal, new_fs
+        A tuple of (upsampled_signal, new_fs).
     """
     if factor is None:
         factor = cfg.PCHIP_FACTOR
@@ -132,30 +187,54 @@ def upsample_pchip(signal, fs, factor=None):
     return new_signal, new_fs
 
 
-def bandpass_filter(data, lowcut, highcut, fs, order=4):
+def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, order: int = 4) -> np.ndarray:
     """
-    Stable bandpass filter with edge effect protection.
+    Applies a stable bandpass filter with edge effect protection.
+
+    Args:
+        data: 1D numpy array of the input signal.
+        lowcut: Lower cutoff frequency in Hz.
+        highcut: Upper cutoff frequency in Hz.
+        fs: Sampling frequency in Hz.
+        order: Filter order. Defaults to 4.
+
+    Returns:
+        1D numpy array of the filtered signal.
     """
-    # 1. Remove linear trend (baseline drift)
-    data_detrended = detrend(data)
-    
+    # 1. Remove DC offset first, then remove linear trend (baseline drift).
+    #    Doing constant-detrend before linear-detrend avoids a residual step at
+    #    the edges when the signal has a nonzero mean after slope removal.
+    data_detrended = detrend(detrend(data, type='constant'), type='linear')
+
     # 2. Smoothly taper 5% at the edges to zero to avoid filter shock
     window = tukey(len(data_detrended), alpha=0.05)
     data_ready = data_detrended * window
-    
+
     nyq = 0.5 * fs
     low = lowcut / nyq
     high = highcut / nyq
-    
+
     sos = butter(order, [low, high], btype='band', output='sos')
     return sosfiltfilt(sos, data_ready)
 
 
-def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
+def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcut: float, nv: int = None, use_ssq: bool = True) -> np.ndarray:
     """
-    Computes a Continuous Wavelet Transform (CWT) spectrogram
-    based on the Morse wavelet (built into ssqueezepy).
-    Executes at 1-second resolution without decimation.
+    Computes a Continuous Wavelet Transform (CWT) spectrogram based on the Morse wavelet.
+
+    Executes at 1-second resolution without decimation and uses intelligent chunking
+    to bound RAM usage. Applies a local Gaussian blur and converts magnitude to log scale (dB).
+
+    Args:
+        signal: 1D numpy array of the input signal.
+        fs: Sampling frequency in Hz.
+        lowcut: Lower frequency bound of interest in Hz.
+        highcut: Upper frequency bound of interest in Hz.
+        nv: Number of voices per octave. Defaults to cfg.CWT_NV.
+        use_ssq: Whether to use Synchrosqueezing for enhanced time-frequency resolution.
+
+    Returns:
+        2D numpy array representing the spectrogram image in (time, frequency) orientation.
     """
     if nv is None:
         nv = cfg.CWT_NV
@@ -171,7 +250,6 @@ def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
     # Setup Morse wavelet core with parameters from config
     morse_wavelet = Wavelet(('gmw', {'gamma': cfg.MORSE_GAMMA, 'beta': cfg.MORSE_BETA}))
 
-    print(f"[DEBUG] Running CWT with nv={nv}, gamma={cfg.MORSE_GAMMA}, beta={cfg.MORSE_BETA}, blur=({cfg.GAUSSIAN_SIGMA_FREQ}, {cfg.GAUSSIAN_SIGMA_TIME}), use_ssq={use_ssq}")
 
     chunk_size = 32768
     overlap = 16384  # Heavily increased overlap to completely eliminate CWT boundary artifacts
@@ -191,6 +269,9 @@ def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
     if N <= chunk_size:
         # Run on full signal
         if use_ssq:
+            # ssq_cwt always computes both the plain CWT (Wx) and the
+            # synchrosqueezed transform (Tw).  We only use Tw for the
+            # sharpened time-frequency image; Wx is intentionally discarded.
             Tw, Wx, freqs, _ = ssq_cwt(
                 processing_signal,
                 wavelet=morse_wavelet,
@@ -250,6 +331,7 @@ def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
                 chunk = padded_chunk
             
             if use_ssq:
+                # Wx (plain CWT) is discarded; only the synchrosqueezed Tw is used.
                 Tw, _, freqs, _ = ssq_cwt(
                     chunk,
                     wavelet=morse_wavelet,
@@ -323,7 +405,6 @@ def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
         Wx_db = np.concatenate(Wx_db_chunks, axis=1)
 
     # Dynamic Range Clipping
-    import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         if np.all(np.isnan(Wx_db)):
@@ -341,14 +422,34 @@ def compute_cwt_spectrogram(signal, fs, lowcut, highcut, nv=None, use_ssq=True):
     return Wx_contrast.T
 
 
-def process_signal_pipeline(raw_signal, fs, lowcut, highcut, window_size=None, n_sigmas=None, apply_smoothing=True, progress_callback=None):
+def process_signal_pipeline(
+    raw_signal: np.ndarray,
+    fs: float,
+    lowcut: float,
+    highcut: float,
+    window_size: int = None,
+    n_sigmas: float = None,
+    apply_smoothing: bool = True,
+    progress_callback: Optional[Callable[[int], None]] = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Full processing pipeline for the UI:
-    1. Clean and smooth
-    2. Upsample
-    3. Bandpass filter
-    4. Compute CWT spectrogram
-    5. Max pooling for UI performance
+    Full processing pipeline for the interactive UI.
+
+    Performs spike removal, Savitzky-Golay smoothing, PCHIP upsampling, bandpass filtering, 
+    and CWT spectrogram computation with max pooling for UI performance.
+
+    Args:
+        raw_signal: 1D numpy array of the raw signal data.
+        fs: Original sampling frequency in Hz.
+        lowcut: Lower frequency bound in Hz.
+        highcut: Upper frequency bound in Hz.
+        window_size: Outlier window length. Defaults to cfg.DEFAULT_WINDOW_SIZE.
+        n_sigmas: Outlier threshold. Defaults to cfg.DEFAULT_N_SIGMAS.
+        apply_smoothing: Whether to apply Savitzky-Golay smoothing.
+        progress_callback: Optional callback taking an integer percentage (0-100).
+
+    Returns:
+        A tuple of (downsampled_filtered_signal, spectrogram_image_data).
     """
     if progress_callback: progress_callback(5)
     
@@ -361,11 +462,12 @@ def process_signal_pipeline(raw_signal, fs, lowcut, highcut, window_size=None, n
     )
     if progress_callback: progress_callback(20)
     
-    # Performance shortcut for very long signals (e.g. Global View)
+    # Performance shortcut for very long signals (e.g. Global View).
+    # PCHIP upsampling is skipped above cfg.PCHIP_LONG_SIGNAL_THRESHOLD because
+    # it is memory-intensive and the bandpass filter's effective resolution
+    # degrades only modestly at the original fs for long observations.
     N_orig = len(raw_signal)
-    
-    # Decide pchip factor
-    actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= 30000 else 1
+    actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= cfg.PCHIP_LONG_SIGNAL_THRESHOLD else 1
     
     # Because compute_cwt_spectrogram now uses intelligent chunking,
     # we can safely run Synchrosqueezing (use_ssq=True) and full nv 

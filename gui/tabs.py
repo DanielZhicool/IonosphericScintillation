@@ -77,7 +77,10 @@ class SignalTab(QWidget):
             color='#CCCCCC'
         )
 
-    def set_channel(self, channel_name):
+    def set_channel(self, channel_name, force=False):
+        if not force and getattr(self, 'current_channel', None) == channel_name and self.curve_filtered.xData is not None and len(self.curve_filtered.xData) > 0:
+            return
+
         self.current_channel = channel_name
         self.raw_signal = self.df_slice[channel_name].values
 
@@ -89,10 +92,11 @@ class SignalTab(QWidget):
         # Clear the old analysis so it doesn't look mismatched while the worker calculates
         self.curve_filtered.setData([], [])
         self.img_spec.setImage(np.zeros((1, 1)), autoLevels=False)
+        self.last_analysis_state = None
 
     def update_raw(self, df_updated):
         self.df_slice = df_updated.copy()
-        self.set_channel(self.current_channel)
+        self.set_channel(self.current_channel, force=True)
 
     def update_filtered(self, filtered_signal):
         self.curve_filtered.setData(self.time_sec, filtered_signal)
@@ -110,6 +114,10 @@ class SignalTab(QWidget):
         
         # Set image WITHOUT autoLevels so pyqtgraph doesn't interfere
         self.img_spec.setImage(img_data, autoLevels=False)
+        
+        # Update Spectrogram Title with signal name
+        source = self.tab_name if self.tab_name != 'Full Overview' else 'Full Overview'
+        self.p3.setTitle(f"CWT Spectrogram - {source} ({self.current_channel})")
         
         # CRITICAL: The ColorBarItem owns the level state and overrides setImage(levels=...).
         # We must set levels on the colorbar explicitly or the first render will use its

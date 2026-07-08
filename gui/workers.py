@@ -4,7 +4,14 @@ from core.spectral_analysis import run_spectral_pipeline
 from core.signal_processing import process_signal_pipeline
 
 class SpectralAnalysisWorker(QThread):
-    """Worker for running the full spectral-correlation analysis pipeline."""
+    """
+    Worker for running the full spectral-correlation analysis pipeline in a background thread.
+    
+    Emits:
+        progress (int): Pipeline progress percentage (0-100).
+        finished (dict): Completed spectral analysis results.
+        error (str): Formatted traceback string on failure.
+    """
     progress = Signal(int)
     finished = Signal(dict)
     error = Signal(str)
@@ -45,12 +52,19 @@ class SpectralAnalysisWorker(QThread):
                 
             self.progress.emit(100)
             self.finished.emit(band_results)
-        except Exception as e:
+        except Exception:
             self.error.emit(traceback.format_exc())
 
 
 class SignalAnalysisWorker(QThread):
-    """Worker for running the standard CWT analysis pipeline."""
+    """
+    Worker for running the standard CWT analysis pipeline in a background thread.
+
+    Emits:
+        progress (int): Pipeline progress percentage (0-100).
+        finished (tuple): Returns (filtered_sig, img_data).
+        error (str): Formatted traceback string on failure.
+    """
     progress = Signal(int)
     finished = Signal(tuple)
     error = Signal(str)
@@ -78,5 +92,5 @@ class SignalAnalysisWorker(QThread):
                 progress_callback=self.progress.emit
             )
             self.finished.emit((filtered_sig, img_data))
-        except Exception as e:
+        except Exception:
             self.error.emit(traceback.format_exc())

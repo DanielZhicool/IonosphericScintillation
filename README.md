@@ -14,7 +14,7 @@ This suite integrates a range of digital signal processing (DSP) and statistical
 * **Hampel Filter (Outlier Detection):** Uses a rolling median and Median Absolute Deviation (MAD) to detect and remove industrial impulse noise/spikes.
 * **Savitzky-Golay Filter:** Applies polynomial smoothing to reconstruct signal continuity while preserving the physical amplitude of ionospheric scintillations.
 * **PCHIP Interpolation:** Upsamples the signal ($3\times$) using Piecewise Cubic Hermite Interpolating Polynomials to increase detail without introducing the ringing artifacts (overshoot) common in spline interpolation.
-* **Red Noise Generation:** Synthesizes Brownian bridge-corrected red noise to seamlessly fill calibration gaps in the data without creating boundary artifacts.
+* **Red Noise Generation:** Synthesizes AR(1) red noise to fill calibration gaps. Edges are blended with a cosine cross-fade (up to 32 samples) so the join is seamless and the interior retains the correct f⁻² spectral slope — a linear ramp would inject low-frequency power and bias the spectrum.
 * **Tukey Windowing:** Applies a tapered cosine window to the signal boundaries to suppress edge artifacts ("edge fans") during Fourier and Wavelet transforms.
 
 ### 2. Wavelet & Time-Frequency Analysis
@@ -68,7 +68,7 @@ After loading the REGI log, the dataset is automatically split by observation da
 * Adjust the **Filter window size (samples):** and **Outlier threshold (sigma):** spinboxes for the Hampel filter to aggressively or softly clean outliers.
 * Toggle **Enable smoothing** to smooth the signal using the Savitzky-Golay algorithm.
 * Select the desired **Bandpass range:** (e.g., *Small bubbles (5 - 150 s)* or *Large clouds (150 - 600 s)*). Changing this selection automatically triggers the bandpass filter and recalculates the CWT spectrogram. You can also manually trigger a recalculation by clicking **"4. Refresh spectrogram"**.
-* Replace highly noisy regions manually: drag the boundaries of the shaded selection region on the **Raw data** plot to cover the noise, and click **"3. Manually clean region"** to replace the selected segment with synthetic red noise.
+* Replace highly noisy regions manually: drag the boundaries of the shaded selection region on the **Raw data** plot to cover the noise, and click **"3. Manually clean region"** to replace the selected segment with synthetic red noise. **Note:** This modification applies globally to the dataset, meaning any standalone source tabs that overlap with the cleaned time window will automatically update to reflect the cleaned data.
 
 ![Default position of the region selection](images/default_position.png) ![Expanded region of the raw data](images/expanded_region.png)
 
@@ -81,7 +81,7 @@ After loading the REGI log, the dataset is automatically split by observation da
 ### 5. Exporting Results
 ![Exporting](images/export.png)
 * Use **"5. Export plots"** to save the current view (Raw, Filtered, and/or Spectrogram) to an image file. You can select which sub-plots to include.
-* Use **"Batch Export..."** to open the batch processing window, where you can select sessions, channels, spectral bands, and which plots/logs to output. This automatically processes and saves all requested assets (such as *Raw Signal*, *Filtered (Scintillations)*, *CWT Spectrogram*, *Multitaper PSD*, *Thomson F-Test*, *Cross-Spectrum*, and *IDVE (txt log)*) to your chosen output folder, alongside a `BatchExportSettings.txt` file containing the analysis parameters.
+* Use **"Batch Export..."** to open the batch processing window, where you can select sessions, channels, spectral bands, and which plots/logs to output. You can also choose whether to export using your manually cleaned dataset or the original unmodified data. This automatically processes and saves all requested assets (such as *Raw Signal*, *Filtered (Scintillations)*, *CWT Spectrogram*, *Multitaper PSD*, *Thomson F-Test*, *Cross-Spectrum*, and *IDVE (txt log)*) to your chosen output folder, alongside a `BatchExportSettings.txt` file containing the analysis parameters.
 
 ![Batch Export](images/batch_export.png)
 
@@ -106,6 +106,8 @@ These parameters define the default values for the processing pipeline and can b
 | `DEFAULT_N_SIGMAS` | `3.0` | Standard deviation threshold for outlier spike removal |
 | `SAVGOL_POLYORDER` | `2` | Savitzky-Golay polynomial order |
 | `TUKEY_ALPHA` | `0.1` | Edge smoothing taper degree for the Tukey window |
+| `PCHIP_FACTOR` | `3` | PCHIP upsampling multiplier |
+| `PCHIP_LONG_SIGNAL_THRESHOLD` | `30000` | Sample count above which PCHIP upsampling is skipped to save memory |
 | `MTM_N_TAPERS` | `7` | Number of DPSS tapers for the Thomson Multitaper method |
 | `MTM_NW` | `4.0` | Time-bandwidth product for DPSS windows |
 | `FTEST_CONFIDENCE` | `0.95` | Significance level threshold for Fisher's criterion (F-Test) |

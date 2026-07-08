@@ -15,6 +15,6 @@ class TimeAxisItem(pg.AxisItem):
             try:
                 dt = pd.to_datetime(self.start_timestamp + v, unit='s')
                 strings.append(dt.strftime('%H:%M:%S'))
-            except Exception:
+            except (ValueError, OSError, pd.errors.OutOfBoundsDatetime):
                 strings.append("")
         return strings

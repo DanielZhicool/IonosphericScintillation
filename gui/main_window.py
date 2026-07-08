@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 import pyqtgraph.exporters
+import traceback
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QFileDialog, 
                                QComboBox, QSplitter, QMessageBox, QTabWidget,
@@ -11,8 +12,8 @@ from gui.constants import (
     APP_TITLE, BTN_APPLY_NOISE, BTN_ANALYZE, BTN_EXPORT, BTN_LOAD_LOGS, BTN_LOAD_PM6,
     BTN_SPECTRAL, BTN_GLOBAL_SPECTRAL, GLOBAL_SPECTRAL_TAB_NAME,
     CHECK_MARKERS, CHECK_SMOOTH, COMBO_BAND_ITEMS, FILTER_PM6,
-    FILTER_TEXT_FILES, LABEL_BAND, LABEL_CLEANING_HEADER,
-    LABEL_DISPLAY_CHANNEL, LABEL_SIGMA, LABEL_WINDOW,
+    FILTER_TEXT_FILES, LABEL_BAND,
+    LABEL_DISPLAY_CHANNEL,
     LBL_LOADED_SAMPLES, LBL_PM6_NOT_LOADED, MAIN_TAB_NAME,
     MSG_ANALYSIS_DATA_TOO_SHORT_TEXT,
     MSG_ANALYSIS_DATA_TOO_SHORT_TITLE, MSG_ANALYSIS_ERROR_TITLE,
@@ -24,7 +25,6 @@ from gui.constants import (
     MSG_SPECTRAL_NO_SOURCE_TITLE, MSG_SPECTRAL_NO_SOURCE_TEXT,
     MSG_SPECTRAL_ERROR_TITLE, SPECTRAL_TAB_SUFFIX,
     FILE_DIALOG_PM6_TITLE, FILE_DIALOG_REGI_TITLE,
-    SAVE_FILE_DEFAULT_NAME, SAVE_FILE_FILTER,
     MSG_CREATED_TABS_TEMPLATE, CHANNELS
 )
 
@@ -118,7 +118,7 @@ class Uran4App(QMainWindow):
         self.combo_band.currentIndexChanged.connect(self.run_analysis)
 
         self.btn_analyze = QPushButton(BTN_ANALYZE)
-        self.btn_analyze.clicked.connect(self.run_analysis)
+        self.btn_analyze.clicked.connect(lambda: self.run_analysis(force=True))
         self.btn_analyze.setEnabled(False)
         
         self.btn_export = QPushButton(BTN_EXPORT)
@@ -242,6 +242,19 @@ class Uran4App(QMainWindow):
                 return inner
         return None
 
+    def get_all_signal_tabs(self):
+        tabs_list = []
+        for i in range(self.tabs.count()):
+            widget = self.tabs.widget(i)
+            if isinstance(widget, SignalTab):
+                tabs_list.append(widget)
+            elif isinstance(widget, QTabWidget):
+                for j in range(widget.count()):
+                    inner = widget.widget(j)
+                    if isinstance(inner, SignalTab):
+                        tabs_list.append(inner)
+        return tabs_list
+
     def on_tab_changed(self, index):
         if index >= 0 and self.df_pm6 is not None:
             active_tab = self.get_active_tab()
@@ -283,6 +296,7 @@ class Uran4App(QMainWindow):
             
         try:
             self.df_pm6 = load_pm6_data(filepath)
+            self.df_pm6_original = self.df_pm6.copy()
             self.full_time = self.df_pm6['Time_sec'].values
             
             # Extract exact PM6 start datetime
@@ -298,8 +312,8 @@ class Uran4App(QMainWindow):
             self.lbl_status.setText(LBL_LOADED_SAMPLES.format(len(self.df_pm6)))
             self.set_widgets_enabled(True)
             self.run_analysis()
-        except Exception as e:
-            QMessageBox.critical(self, MSG_OPEN_ERROR_TITLE, str(e))
+        except Exception:
+            QMessageBox.critical(self, "Load Error", traceback.format_exc())
 
     def auto_clean_and_split(self):
         if self.df_pm6 is None:
@@ -319,7 +333,15 @@ class Uran4App(QMainWindow):
                 return
 
             pm6_max_sec = self.full_time[-1]
-            df_logs, calibrations, self.sessions = build_observation_sessions(df_logs, pm6_max_sec)
+            df_logs, calibrations, raw_sessions = build_observation_sessions(df_logs, pm6_max_sec)
+            
+            # Filter out sessions that project past the actual PM6 data length
+            self.sessions = []
+            for s in raw_sessions:
+                s_idx = np.searchsorted(self.full_time, s['start'])
+                e_idx = np.searchsorted(self.full_time, s['end'])
+                if s_idx < e_idx and s_idx < len(self.full_time) and (s['end'] - s['start']) > 300:
+                    self.sessions.append(s)
             
             for _, row in calibrations.iterrows():
                 s_idx = np.searchsorted(self.full_time, row['Start_sec'])
@@ -441,9 +463,10 @@ class Uran4App(QMainWindow):
                     # Add label as an InfiniteLine at center (force angle=90 to be vertical)
                     lbl1 = pg.InfiniteLine(pos=mid_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchors': [(0, 0.5), (0, 0.5)]})
                     lbl2 = pg.InfiniteLine(pos=mid_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchors': [(0, 0.5), (0, 0.5)]})
+                    lbl3 = pg.InfiniteLine(pos=mid_sec, angle=90, pen=pg.mkPen(None), label=short_name, labelOpts={'position': lbl_y_pos, 'color': (255, 80, 80), 'movable': False, 'fill': (0, 0, 0, 100), 'angle': 90, 'anchors': [(0, 0.5), (0, 0.5)]})
 
                     is_visible = self.check_markers.isChecked()
-                    for item in [line1, line2, line3, lbl1, lbl2]:
+                    for item in [line1, line2, line3, lbl1, lbl2, lbl3]:
                         item.setVisible(is_visible)
 
                     main_tab.p1.addItem(line1)
@@ -453,8 +476,9 @@ class Uran4App(QMainWindow):
                     main_tab.p2.addItem(lbl2)
 
                     main_tab.p3.addItem(line3)
+                    main_tab.p3.addItem(lbl3)
 
-                    main_tab.session_markers.extend([line1, line2, line3, lbl1, lbl2])
+                    main_tab.session_markers.extend([line1, line2, line3, lbl1, lbl2, lbl3])
                 else:
                     skipped_tabs.append(f"{target} ({s_sec:.0f}s - {e_sec:.0f}s)")
 
@@ -492,6 +516,7 @@ class Uran4App(QMainWindow):
         from gui.batch_export_dialog import BatchExportDialog
         dialog = BatchExportDialog(
             df_pm6=self.df_pm6,
+            df_pm6_original=getattr(self, 'df_pm6_original', self.df_pm6),
             sessions=self.sessions,
             start_datetime=self.pm6_start_dt,
             fs=self.fs,
@@ -509,18 +534,28 @@ class Uran4App(QMainWindow):
         if not active_tab: return
         
         min_x, max_x = active_tab.region.getRegion()
-        s_idx = np.searchsorted(active_tab.time_sec, min_x)
-        e_idx = np.searchsorted(active_tab.time_sec, max_x)
+        global_s_idx = np.searchsorted(self.full_time, min_x)
+        global_e_idx = np.searchsorted(self.full_time, max_x)
         
-        if s_idx < e_idx:
-            new_df = active_tab.df_slice.copy()
+        if global_s_idx < global_e_idx:
+            # Apply to global df_pm6
             for col in CHANNELS:
-                new_df[col] = fill_gap_with_red_noise(new_df[col].values, s_idx, e_idx)
+                self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, global_s_idx, global_e_idx)
                 
-            active_tab.update_raw(new_df)
-            self.run_analysis()
+            # Propagate to all overlapping tabs
+            for tab in self.get_all_signal_tabs():
+                s_sec = tab.time_sec[0]
+                e_sec = tab.time_sec[-1]
+                
+                # Check overlap
+                if s_sec <= max_x and e_sec >= min_x:
+                    g_s_idx = np.searchsorted(self.full_time, s_sec)
+                    g_e_idx = np.searchsorted(self.full_time, e_sec, side='right')
+                    tab.update_raw(self.df_pm6.iloc[g_s_idx:g_e_idx])
+                    
+            self.run_analysis(force=True)
 
-    def run_analysis(self):
+    def run_analysis(self, *args, force=False):
         """Run the signal processing pipeline."""
         if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
             return
@@ -528,6 +563,18 @@ class Uran4App(QMainWindow):
         active_tab = self.get_active_tab()
         if not active_tab:
             return
+        
+        # Calculate current state
+        current_state = {
+            'channel': self.combo_channel.currentText(),
+            'band': self.combo_band.currentIndex(),
+            'window': self.spin_window.value(),
+            'sigmas': self.spin_sigmas.value(),
+            'smooth': self.check_smooth.isChecked(),
+        }
+
+        if not force and getattr(active_tab, 'last_analysis_state', None) == current_state:
+            return  # No change in parameters, skip calculation
         
         # Proceed with analysis even if on the main tab (global view).
         # Performance shortcuts will be handled inside the signal processing pipeline.
@@ -577,6 +624,7 @@ class Uran4App(QMainWindow):
                 try:
                     active_tab.update_filtered(filtered_sig_downsampled)
                     active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
+                    active_tab.last_analysis_state = current_state
                 except RuntimeError:
                     pass
                 
@@ -596,8 +644,8 @@ class Uran4App(QMainWindow):
             self.worker.error.connect(on_error)
             self.worker.start()
 
-        except Exception as e:
-            QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to start analysis:\n{str(e)}")
+        except Exception:
+            QMessageBox.critical(self, "Error", f"Could not create worker thread.\n\n{traceback.format_exc()}")
 
     def export_plots(self):
         active_tab = self.get_active_tab()
@@ -807,8 +855,8 @@ class Uran4App(QMainWindow):
             self.worker.error.connect(on_error)
             self.worker.start()
 
-        except Exception as e:
-            QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{str(e)}")
+        except Exception:
+            QMessageBox.critical(self, "Error", traceback.format_exc())
 
     def run_global_spectral_analysis(self):
         """Run spectral analysis on the full PM6 dataset (matches professor's 'Global' approach)."""

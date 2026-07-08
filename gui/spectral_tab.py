@@ -162,8 +162,8 @@ class SpectralTab(QWidget):
                 top_idx = sorted(peaks, key=lambda i: vals[i], reverse=True)[:5]
                 top_periods = sorted([periods[i] for i in top_idx], reverse=True)
                 peaks_str = ", ".join(f"{tp:.1f}" for tp in top_periods)
-                title_html = (f"{label}<br>"
-                              f"<span style='color:red; font-size:9pt;'>"
+                title_html = (f"<span style='font-size:12pt;'>{label}</span><br>"
+                              f"<span style='color:#FF5555; font-size:11pt; font-weight:bold;'>"
                               f"Top 5 periods (s): {peaks_str}</span>")
                 p.setTitle(title_html)
                 peak_x = [periods[i] for i in top_idx]
@@ -181,6 +181,7 @@ class SpectralTab(QWidget):
             ('25 MHz Pol B', 1, 1),
         ]
         threshold = data_dict.get('threshold', 1.0)
+        confidence_pct = data_dict.get('confidence', 0.95) * 100
         link_plot = None
 
         for ch_name, row, col in channels:
@@ -190,17 +191,16 @@ class SpectralTab(QWidget):
             label = ch_name
             T0 = data_dict.get(ch_name + '_T0', None)
 
-            # Build the title
             if T0 is not None:
                 t2, t3 = T0 / 2.0, T0 / 3.0
-                title_html = f"{label}<br><span style='color:#42A5F5; font-size:9pt;'>T₀ = {T0:.1f} s"
+                title_html = f"<span style='font-size:12pt;'>{label}</span><br><span style='color:#42A5F5; font-size:11pt; font-weight:bold;'>T₀ = {T0:.1f} s"
                 if p_min <= t2 <= p_max:
                     title_html += f" | 2T: {t2:.1f} s"
                 if p_min <= t3 <= p_max:
                     title_html += f" | 3T: {t3:.1f} s"
                 title_html += "</span>"
             else:
-                title_html = label
+                title_html = f"<span style='font-size:12pt;'>{label}</span>"
 
             p = graph.addPlot(row=row, col=col, title=title_html)
             p.setLabel('bottom', 'Period (Sec)')
@@ -215,27 +215,28 @@ class SpectralTab(QWidget):
             vals = data_dict[ch_name][mask][::-1]
             p.plot(periods, vals, pen=pg.mkPen('#42A5F5', width=0.8))  # uniform blue
 
-            # 99% threshold dashed red line with Russian label
+            # Confidence threshold dashed red line
             thresh_line = pg.InfiniteLine(
                 pos=threshold, angle=0,
-                pen=pg.mkPen('r', width=1.5, style=Qt.DashLine),
+                pen=pg.mkPen('#FF4444', width=2.5, style=Qt.DashLine),
             )
             p.addItem(thresh_line)
+            thresh_html = f"<div style='font-size: 11pt; font-weight: bold; color: #FF4444;'>{confidence_pct:.0f}% Confidence Threshold (F={threshold:.2f})</div>"
             thresh_label = pg.TextItem(
-                f'99% Confidence Threshold (F={threshold:.2f})',
-                color='r', anchor=(0, 1)
+                html=thresh_html, anchor=(0, 1)
             )
-            thresh_label.setPos(p_min + (p_max - p_min) * 0.01, threshold)
+            thresh_label.setPos(p_min + (p_max - p_min) * 0.02, threshold)
             p.addItem(thresh_label)
 
             if T0 is not None:
                 # Black vertical stem at T0
                 vl_t0 = pg.InfiniteLine(
                     pos=T0, angle=90,
-                    pen=pg.mkPen('w', width=1.5),
+                    pen=pg.mkPen('w', width=2.0),
                 )
                 p.addItem(vl_t0)
-                t0_label = pg.TextItem('T₀', color='w', anchor=(0.5, 1))
+                t0_html = "<div style='font-size: 12pt; font-weight: bold; color: white;'>T₀</div>"
+                t0_label = pg.TextItem(html=t0_html, anchor=(0.5, 1))
                 t0_label.setPos(T0, p.viewRange()[1][1] if p.viewRange()[1][1] > 0 else threshold * 5)
                 p.addItem(t0_label)
 
@@ -253,10 +254,11 @@ class SpectralTab(QWidget):
                     if p_min <= harm_period <= p_max:
                         vl = pg.InfiniteLine(
                             pos=harm_period, angle=90,
-                            pen=pg.mkPen('#FF00FF', width=1.2, style=Qt.DashLine),
+                            pen=pg.mkPen('#FF00FF', width=1.5, style=Qt.DashLine),
                         )
                         p.addItem(vl)
-                        hl = pg.TextItem(harm_label, color='#FF00FF', anchor=(0.5, 1))
+                        hl_html = f"<div style='font-size: 11pt; font-weight: bold; color: #FF00FF;'>{harm_label}</div>"
+                        hl = pg.TextItem(html=hl_html, anchor=(0.5, 1))
                         hl.setPos(harm_period, threshold * 2)
                         p.addItem(hl)
 
