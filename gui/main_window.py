@@ -28,16 +28,11 @@ from gui.constants import (
     MSG_CREATED_TABS_TEMPLATE, CHANNELS
 )
 
-# Core parsers and signal processing
-from core.parsers import load_pm6_data, parse_regi_with_time, build_observation_sessions
-from core.signal_processing import fill_gap_with_red_noise, process_signal_pipeline
-
 from gui.plotting import TimeAxisItem
 from gui.tabs import SignalTab
 from gui.spectral_tab import SpectralTab
 from gui.settings_tab import SettingsDialog
 from gui.workers import SpectralAnalysisWorker, SignalAnalysisWorker
-from core.spectral_analysis import run_spectral_pipeline
 
 
 class Uran4App(QMainWindow):
@@ -52,6 +47,7 @@ class Uran4App(QMainWindow):
         self.full_time = None
         self.pm6_start_dt = None
         self.sessions = []
+        self._pending_reanalysis = False
         
         self.init_ui()
 
@@ -301,6 +297,7 @@ class Uran4App(QMainWindow):
             return
             
         try:
+            from core.parsers import load_pm6_data
             self.df_pm6 = load_pm6_data(filepath)
             self.df_pm6_original = self.df_pm6.copy()
             self.full_time = self.df_pm6['Time_sec'].values
@@ -308,10 +305,19 @@ class Uran4App(QMainWindow):
             # Extract exact PM6 start datetime
             self.pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
             
+            # Cancel any in-progress analysis from a previous dataset
+            if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+                self.worker.finished.disconnect()
+                self.worker.error.disconnect()
+                self.worker.quit()
+                self.worker.wait(2000)
+                QApplication.restoreOverrideCursor()
+            self._pending_reanalysis = False
+            
             self.tabs.clear()
             
             # Pass pm6_start_dt into the tab
-            main_tab = SignalTab(self.df_pm6, self.pm6_start_dt, tab_name=MAIN_TAB_NAME, fs=self.fs)
+            main_tab = SignalTab(self.df_pm6, self.pm6_start_dt, tab_name=MAIN_TAB_NAME, fs=self.fs, full_datetime_series=self.df_pm6['Datetime'].values)
             self.tabs.addTab(main_tab, MAIN_TAB_NAME)
             self.tabs.setCurrentWidget(main_tab)
             
@@ -331,6 +337,9 @@ class Uran4App(QMainWindow):
             return
 
         try:
+            from core.parsers import parse_regi_with_time, build_observation_sessions
+            from core.signal_processing import fill_gap_with_red_noise
+
             pm6_start_dt = self.df_pm6['Datetime'].iloc[0]
             df_logs = parse_regi_with_time(filepath, pm6_start_dt)
             
@@ -338,20 +347,29 @@ class Uran4App(QMainWindow):
                 QMessageBox.warning(self, MSG_NO_LOG_EVENTS_TITLE, MSG_NO_LOG_EVENTS_TEXT)
                 return
 
-            pm6_max_sec = self.full_time[-1]
-            df_logs, calibrations, raw_sessions = build_observation_sessions(df_logs, pm6_max_sec)
+            df_pm6_original_time = (self.df_pm6['Datetime'] - pm6_start_dt).dt.total_seconds().values
+            pm6_max_sec_calendar = df_pm6_original_time[-1]
             
-            # Filter out sessions that project past the actual PM6 data length
+            df_logs, calibrations, raw_sessions = build_observation_sessions(df_logs, pm6_max_sec_calendar)
+            
+            # Filter out sessions that project past the actual PM6 data length and store as indices
             self.sessions = []
             for s in raw_sessions:
-                s_idx = np.searchsorted(self.full_time, s['start'])
-                e_idx = np.searchsorted(self.full_time, s['end'])
-                if s_idx < e_idx and s_idx < len(self.full_time) and (s['end'] - s['start']) > 300:
-                    self.sessions.append(s)
+                s_idx = np.searchsorted(df_pm6_original_time, s['start'])
+                actual_end = min(s['end'], pm6_max_sec_calendar)
+                if actual_end >= pm6_max_sec_calendar:
+                    e_idx = len(self.df_pm6)
+                else:
+                    e_idx = np.searchsorted(df_pm6_original_time, actual_end)
+                if s_idx < e_idx and s_idx < len(self.df_pm6) and (actual_end - s['start']) > 300:
+                    s_capped = s.copy()
+                    s_capped['start'] = s_idx
+                    s_capped['end'] = e_idx
+                    self.sessions.append(s_capped)
             
             for _, row in calibrations.iterrows():
-                s_idx = np.searchsorted(self.full_time, row['Start_sec'])
-                e_idx = np.searchsorted(self.full_time, row['End_sec'])
+                s_idx = np.searchsorted(df_pm6_original_time, row['Start_sec'])
+                e_idx = np.searchsorted(df_pm6_original_time, row['End_sec'])
                 if s_idx < e_idx:
                     for col in CHANNELS:
                         self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, s_idx, e_idx)
@@ -380,14 +398,15 @@ class Uran4App(QMainWindow):
             
             # Draw day markers
             current_day = self.pm6_start_dt.normalize() + pd.Timedelta(days=1)
-            pm6_end_dt = self.pm6_start_dt + pd.to_timedelta(self.full_time[-1], unit='s')
+            pm6_end_dt = self.df_pm6['Datetime'].iloc[-1]
             
             while current_day < pm6_end_dt:
                 sec_offset = (current_day - self.pm6_start_dt).total_seconds()
                 date_label = current_day.strftime('%Y-%m-%d')
+                index_offset = np.searchsorted(df_pm6_original_time, sec_offset)
                 
                 for p in [main_tab.p1, main_tab.p2, main_tab.p3]:
-                    day_line = pg.InfiniteLine(pos=sec_offset, angle=90, pen=pg.mkPen(100, 200, 255, 150, style=Qt.DashLine), label=date_label, labelOpts={'position': 0.05, 'color': (150, 220, 255), 'movable': False, 'fill': (0, 0, 0, 100)})
+                    day_line = pg.InfiniteLine(pos=index_offset, angle=90, pen=pg.mkPen(100, 200, 255, 150, style=Qt.DashLine), label=date_label, labelOpts={'position': 0.05, 'color': (150, 220, 255), 'movable': False, 'fill': (0, 0, 0, 100)})
                     day_line.setVisible(self.check_day_markers.isChecked())
                     p.addItem(day_line)
                     main_tab.day_markers.append(day_line)
@@ -406,8 +425,8 @@ class Uran4App(QMainWindow):
             
             # Pre-count to identify duplicate sources on the same day
             for s in self.sessions:
-                s_sec = s['start']
-                session_dt = self.pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
+                s_idx = s['start']
+                session_dt = self.df_pm6['Datetime'].iloc[s_idx]
                 date_str = session_dt.strftime('%d %b')
                 daily_target_counts[(date_str, s['target'])] += 1
 
@@ -416,17 +435,17 @@ class Uran4App(QMainWindow):
 
             for s in self.sessions:
                 target = s['target']
-                s_sec = s['start']
-                e_sec = s['end']
+                s_idx = s['start']
+                e_idx = s['end']
                 
-                s_idx = np.searchsorted(self.full_time, s_sec)
-                e_idx = np.searchsorted(self.full_time, e_sec)
+                s_sec = s_idx
+                e_sec = e_idx
                 
-                if s_idx < e_idx and s_idx < len(self.full_time) and (e_sec - s_sec) > 300:
+                if s_idx < e_idx and s_idx < len(self.df_pm6) and (e_idx - s_idx) > 300:
                     df_slice = self.df_pm6.iloc[s_idx:e_idx].copy()
                     
                     # Get exact start date and time
-                    session_dt = self.pm6_start_dt + pd.to_timedelta(s_sec, unit='s')
+                    session_dt = self.df_pm6['Datetime'].iloc[s_idx]
                     date_str = session_dt.strftime('%d %b')  # Example: "04 Jan"
                     time_str = session_dt.strftime('%H:%M')  # Example: "17:59"
                     
@@ -448,7 +467,7 @@ class Uran4App(QMainWindow):
                         marker_name = f"{target} ({date_str})"
                         
                     # Create the plot and hide it inside the current day's tab
-                    target_tab = SignalTab(df_slice, self.pm6_start_dt, tab_name=marker_name, fs=self.fs)
+                    target_tab = SignalTab(df_slice, self.pm6_start_dt, tab_name=marker_name, fs=self.fs, full_datetime_series=self.df_pm6['Datetime'].values)
                     day_tab_widgets[date_str].addTab(target_tab, inner_tab_name)
                     created_tabs.append(marker_name)
 
@@ -544,6 +563,7 @@ class Uran4App(QMainWindow):
         global_e_idx = np.searchsorted(self.full_time, max_x)
         
         if global_s_idx < global_e_idx:
+            from core.signal_processing import fill_gap_with_red_noise
             # Apply to global df_pm6
             for col in CHANNELS:
                 self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, global_s_idx, global_e_idx)
@@ -564,14 +584,20 @@ class Uran4App(QMainWindow):
     def run_analysis(self, *args, force=False):
         """Run the signal processing pipeline."""
         if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            # Mark that a re-analysis is needed once the current worker finishes,
+            # so switching tabs/channels during computation doesn't get silently dropped.
+            self._pending_reanalysis = True
             return
             
         active_tab = self.get_active_tab()
         if not active_tab:
             return
         
-        # Calculate current state
+        # Calculate current state — includes the tab identity so that
+        # switching between tabs with the same parameters still triggers
+        # a fresh analysis.
         current_state = {
+            'tab_id': id(active_tab),
             'channel': self.combo_channel.currentText(),
             'band': self.combo_band.currentIndex(),
             'window': self.spin_window.value(),
@@ -609,6 +635,7 @@ class Uran4App(QMainWindow):
             n_sigmas = self.spin_sigmas.value()
             apply_smoothing = self.check_smooth.isChecked()
 
+            self._pending_reanalysis = False
             self.set_widgets_enabled(False)
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
@@ -629,25 +656,41 @@ class Uran4App(QMainWindow):
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 filtered_sig_downsampled, img_data_pooled = result
-                try:
-                    active_tab.update_filtered(filtered_sig_downsampled)
-                    active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
-                    active_tab.last_analysis_state = current_state
-                except RuntimeError:
-                    pass
                 
-                # If the user changed tabs while the worker was busy, run analysis for the new tab now
+                # Only apply results if the tab AND channel still match what was computed.
+                # If the user switched tabs or channels while the worker was running,
+                # discard these stale results and re-run for the current state.
                 current_active_tab = self.get_active_tab()
-                if current_active_tab and current_active_tab != active_tab:
+                current_channel = self.combo_channel.currentText()
+                results_still_valid = (
+                    current_active_tab is active_tab
+                    and current_channel == current_state['channel']
+                )
+                
+                if results_still_valid:
+                    try:
+                        active_tab.update_filtered(filtered_sig_downsampled)
+                        active_tab.update_spectrogram(img_data_pooled, lowcut, highcut)
+                        active_tab.last_analysis_state = current_state
+                    except RuntimeError:
+                        pass
+                
+                # Re-trigger analysis if the user changed tabs/channels while the
+                # worker was busy, or if any run_analysis call was dropped.
+                if not results_still_valid or self._pending_reanalysis:
+                    self._pending_reanalysis = False
                     from PySide6.QtCore import QTimer
                     QTimer.singleShot(0, self.run_analysis)
 
             def on_error(err_str):
+                QApplication.restoreOverrideCursor()
                 self.set_widgets_enabled(True)
                 self.progress_bar.setVisible(False)
                 QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
 
             self.worker.progress.connect(self.progress_bar.setValue)
+            self.worker.finished_cb = on_finished
+            self.worker.error_cb = on_error
             self.worker.finished.connect(on_finished)
             self.worker.error.connect(on_error)
             self.worker.start()
@@ -862,6 +905,8 @@ class Uran4App(QMainWindow):
                 QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
 
             self.worker.progress.connect(self.progress_bar.setValue)
+            self.worker.finished_cb = on_finished
+            self.worker.error_cb = on_error
             self.worker.finished.connect(on_finished)
             self.worker.error.connect(on_error)
             self.worker.start()
@@ -936,6 +981,8 @@ class Uran4App(QMainWindow):
                 QMessageBox.critical(self, MSG_SPECTRAL_ERROR_TITLE, f"Global spectral analysis failed:\n{err_str}")
 
             self.worker.progress.connect(self.progress_bar.setValue)
+            self.worker.finished_cb = on_finished
+            self.worker.error_cb = on_error
             self.worker.finished.connect(on_finished)
             self.worker.error.connect(on_error)
             self.worker.start()

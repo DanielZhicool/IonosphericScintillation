@@ -1,7 +1,5 @@
 import traceback
 from PySide6.QtCore import QThread, Signal
-from core.spectral_analysis import run_spectral_pipeline
-from core.signal_processing import process_signal_pipeline
 
 class SpectralAnalysisWorker(QThread):
     """
@@ -28,6 +26,7 @@ class SpectralAnalysisWorker(QThread):
 
     def run(self):
         try:
+            from core.spectral_analysis import run_spectral_pipeline
             band_results = {}
             for i, (band_key, lowcut, highcut) in enumerate(self.bands):
                 min_period = 1.0 / lowcut
@@ -81,6 +80,7 @@ class SignalAnalysisWorker(QThread):
 
     def run(self):
         try:
+            from core.signal_processing import process_signal_pipeline
             filtered_sig, img_data = process_signal_pipeline(
                 self.raw_signal,
                 self.fs,

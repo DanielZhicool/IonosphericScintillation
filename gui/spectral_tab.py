@@ -5,11 +5,11 @@ Cross-Spectrum, and ionospheric drift velocity results.
 
 import numpy as np
 import pyqtgraph as pg
-from scipy.signal import find_peaks
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QTextEdit, QSplitter,
 )
 from PySide6.QtCore import Qt
+from scipy.signal import find_peaks
 
 from gui.constants import (
     SPECTRAL_TAB_PSD_TITLE,

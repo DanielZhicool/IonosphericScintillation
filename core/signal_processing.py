@@ -3,13 +3,6 @@ from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, sosfiltfilt, savgol_filter, detrend, lfilter
-from scipy.signal.windows import tukey
-from scipy.interpolate import pchip_interpolate
-from scipy.ndimage import gaussian_filter
-from ssqueezepy import ssq_cwt, cwt, Wavelet
-from ssqueezepy.utils import make_scales
-from ssqueezepy.wavelets import center_frequency
 
 import core.config as cfg
 
@@ -48,6 +41,7 @@ def clean_and_smooth_signal(signal: np.ndarray, window_size: int = None, n_sigma
     
     # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
+        from scipy.signal import savgol_filter
         smooth_window = window_size if window_size % 2 != 0 else window_size + 1
         if smooth_window > 3:
             cleaned_signal = savgol_filter(cleaned_signal, window_length=smooth_window, polyorder=polyorder)
@@ -81,6 +75,8 @@ def fill_gap_with_red_noise(
     Returns:
         1D numpy array with the gap filled.
     """
+    from scipy.signal import lfilter
+
     signal_cleaned = signal.copy()
     N = len(signal_cleaned)
 
@@ -181,6 +177,8 @@ def upsample_pchip(signal: np.ndarray, fs: float, factor: int = None) -> tuple[n
     new_N = N * factor
     t_new = np.linspace(t[0], t[-1], new_N)
     
+    from scipy.interpolate import pchip_interpolate
+
     new_signal = pchip_interpolate(t, signal, t_new)
     new_fs = fs * factor
     
@@ -201,6 +199,9 @@ def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, 
     Returns:
         1D numpy array of the filtered signal.
     """
+    from scipy.signal import butter, sosfiltfilt, detrend
+    from scipy.signal.windows import tukey
+
     # 1. Remove DC offset first, then remove linear trend (baseline drift).
     #    Doing constant-detrend before linear-detrend avoids a residual step at
     #    the edges when the signal has a nonzero mean after slope removal.
@@ -236,6 +237,12 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
     Returns:
         2D numpy array representing the spectrogram image in (time, frequency) orientation.
     """
+    from ssqueezepy import ssq_cwt, cwt, Wavelet
+    from ssqueezepy.utils import make_scales
+    from ssqueezepy.wavelets import center_frequency
+    from scipy.signal.windows import tukey
+    from scipy.ndimage import gaussian_filter
+
     if nv is None:
         nv = cfg.CWT_NV
         

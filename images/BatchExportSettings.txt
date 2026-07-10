@@ -1,0 +1,38 @@
+Batch Export Settings
+=====================
+{
+    "window_size": 15,
+    "n_sigmas": 3.0,
+    "apply_smoothing": true,
+    "graphs_config": {
+        "raw": true,
+        "filtered": true,
+        "spectrogram": true,
+        "psd": false,
+        "ftest": false,
+        "cross": false,
+        "idve": false,
+        "markers": true,
+        "day_markers": true,
+        "band_selection": "Small bubbles (5 - 150 s)"
+    },
+    "selected_channels": [
+        "P1_20A"
+    ],
+    "bands": [
+        [
+            "5-150s",
+            0.006666666666666667,
+            0.2
+        ]
+    ],
+    "cwt_config": {
+        "nv": 256,
+        "gamma": 3,
+        "beta": 30,
+        "sigma_freq": 1.0,
+        "sigma_time": 1.0,
+        "dynamic_range_db": 40.0,
+        "pchip_factor": 3
+    }
+}

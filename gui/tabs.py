@@ -8,11 +8,12 @@ from gui.plotting import TimeAxisItem
 
 class SignalTab(QWidget):
     """Widget for a signal tab; holds a DataFrame for a target."""
-    def __init__(self, df_slice, start_datetime, tab_name=MAIN_TAB_NAME, fs=1.0):
+    def __init__(self, df_slice, start_datetime, tab_name=MAIN_TAB_NAME, fs=1.0, full_datetime_series=None):
         super().__init__()
         self.df_slice = df_slice.copy()
         self.time_sec = self.df_slice['Time_sec'].values
         self.fs = fs
+        self.full_datetime_series = full_datetime_series if full_datetime_series is not None else self.df_slice['Datetime'].values
         self.start_datetime = start_datetime
         self.tab_name = tab_name  # remember tab name
         self.session_markers = []  # store session markers and labels
@@ -31,7 +32,7 @@ class SignalTab(QWidget):
         self._update_title()
 
         # Raw data plot (tab name in title)
-        axis_p1 = TimeAxisItem(self.start_datetime, orientation='bottom')
+        axis_p1 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation='bottom')
         self.p1 = self.graph_widget.addPlot(title=RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=self.current_channel), axisItems={'bottom': axis_p1}, row=1, col=0)
         self.p1.showGrid(x=True, y=True)
         self.p1.setLabel('left', 'Amplitude')
@@ -44,7 +45,7 @@ class SignalTab(QWidget):
         self.p1.addItem(self.region, ignoreBounds=True)
 
         # Ionospheric scintillations
-        axis_p2 = TimeAxisItem(self.start_datetime, orientation='bottom')
+        axis_p2 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation='bottom')
         self.p2 = self.graph_widget.addPlot(title=IONOSPHERIC_TITLE, axisItems={'bottom': axis_p2}, row=2, col=0)
         self.p2.showGrid(x=True, y=True)
         self.p2.setXLink(self.p1)
@@ -52,7 +53,7 @@ class SignalTab(QWidget):
         self.curve_filtered = self.p2.plot(pen='g')
 
         # Spectrogram
-        axis_p3 = TimeAxisItem(self.start_datetime, orientation='bottom')
+        axis_p3 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation='bottom')
         self.p3 = self.graph_widget.addPlot(title=SPECTROGRAM_TITLE, axisItems={'bottom': axis_p3}, row=3, col=0)
         self.p3.setXLink(self.p1)
         self.p3.setLabel('left', 'Frequency', units='Hz')
@@ -96,6 +97,13 @@ class SignalTab(QWidget):
 
     def update_raw(self, df_updated):
         self.df_slice = df_updated.copy()
+        self.time_sec = self.df_slice['Time_sec'].values
+        self.full_datetime_series = self.df_slice['Datetime'].values
+        # Update TimeAxisItem references
+        for p in [self.p1, self.p2, self.p3]:
+            axis = p.getAxis('bottom')
+            if isinstance(axis, TimeAxisItem):
+                axis.datetime_series = self.full_datetime_series
         self.set_channel(self.current_channel, force=True)
 
     def update_filtered(self, filtered_signal):

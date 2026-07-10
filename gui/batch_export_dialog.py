@@ -98,9 +98,7 @@ class BatchExportWorker(QThread):
                 if self._is_cancelled:
                     break
 
-                s_sec, e_sec, target = session['start'], session['end'], session['target']
-                s_idx = np.searchsorted(time_full, s_sec)
-                e_idx = np.searchsorted(time_full, e_sec)
+                s_idx, e_idx, target = int(session['start']), int(session['end']), session['target']
                 
                 if s_idx >= e_idx:
                     continue
@@ -110,7 +108,7 @@ class BatchExportWorker(QThread):
                 time_h = time_sec / 3600.0
                 signal_duration = len(df_slice) / self.fs
                 
-                session_dt = self.start_datetime + pd.to_timedelta(s_sec, unit='s')
+                session_dt = self.df_pm6['Datetime'].iloc[s_idx]
                 date_str = session_dt.strftime('%Y%m%d')
                 
                 # Check if we need spectral analysis
@@ -368,25 +366,32 @@ class BatchExportWorker(QThread):
                                                 e_h = ms['end'] / 3600.0
                                                 mid_h = (s_h + e_h) / 2.0
                                                 y_min, y_max = ax.get_ylim()
+                                                # Determine face alpha based on whether it is a spectrogram
+                                                is_spec = "spectrogram" in ax.get_title().lower()
+                                                face_alpha = 0.25 if is_spec else 0.15
                                                 # Draw red shaded region with strong borders
-                                                ax.axvspan(s_h, e_h, facecolor='red', edgecolor='red', linewidth=1.5, linestyle='--', alpha=0.15)
+                                                ax.axvspan(s_h, e_h, 
+                                                           facecolor=(1.0, 0.0, 0.0, face_alpha), 
+                                                           edgecolor=(1.0, 0.0, 0.0, 0.8), 
+                                                           linewidth=1.5, linestyle='--')
                                                 
                                                 # Draw text vertically in the middle, using a white background box so it doesn't blend with spectrogram
-                                                if ax == axes[0]:
-                                                    ax.text(mid_h, y_min + (y_max - y_min) * 0.5, ms['target'], 
-                                                            rotation=90, va='center', ha='center', 
-                                                            color='#FF4444', alpha=1.0, fontweight='bold',
-                                                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'))
+                                                ax.text(mid_h, y_min + (y_max - y_min) * 0.5, ms['target'], 
+                                                        rotation=90, va='center', ha='center', 
+                                                        color='#FF4444', alpha=1.0, fontweight='bold',
+                                                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'))
                                     
                                     if self.graphs_config.get('day_markers', False):
+                                        df_pm6_original_time = (self.df_pm6['Datetime'] - self.start_datetime).dt.total_seconds().values
                                         current_day = self.start_datetime.normalize() + pd.Timedelta(days=1)
-                                        end_dt = self.start_datetime + pd.to_timedelta(time_sec[-1], unit='s')
-                                        while current_day < end_dt:
+                                        pm6_end_dt = self.df_pm6['Datetime'].iloc[-1]
+                                        while current_day < pm6_end_dt:
                                             sec_offset = (current_day - self.start_datetime).total_seconds()
-                                            h_offset = sec_offset / 3600.0
-                                            y_max = ax.get_ylim()[1]
-                                            ax.axvline(h_offset, color='black', linestyle=':', alpha=0.6)
-                                            if ax == axes[0]:
+                                            index_offset = np.searchsorted(df_pm6_original_time, sec_offset)
+                                            if 0 <= index_offset < len(time_sec):
+                                                h_offset = time_sec[index_offset] / 3600.0
+                                                y_max = ax.get_ylim()[1]
+                                                ax.axvline(h_offset, color='black', linestyle=':', alpha=0.6)
                                                 ax.text(h_offset, y_max, current_day.strftime('%Y-%m-%d'), rotation=90, va='top', ha='right', 
                                                         color='black', alpha=0.9, fontweight='bold',
                                                         bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.1'))
@@ -432,7 +437,7 @@ class BatchExportDialog(QDialog):
         self.apply_smoothing = apply_smoothing
         
         # Add Full Overview pseudo-session
-        max_end = max(s['end'] for s in sessions) if sessions else 0
+        max_end = len(df_pm6)
         full_session = {'start': 0, 'end': max_end, 'target': 'Full Overview'}
         self.sessions = [full_session] + sessions
         
@@ -452,7 +457,7 @@ class BatchExportDialog(QDialog):
         
         self.session_map = {}
         for idx, s in enumerate(self.sessions):
-            session_dt = self.start_datetime + pd.to_timedelta(s['start'], unit='s')
+            session_dt = self.df_pm6['Datetime'].iloc[s['start']] if s['start'] < len(self.df_pm6) else self.start_datetime
             date_str = session_dt.strftime('%d %b %H:%M')
             label = f"{s['target']} ({date_str})"
             self.list_sessions.addItem(label)

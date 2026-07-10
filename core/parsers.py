@@ -18,7 +18,7 @@ def load_pm6_data(filepath: str) -> pd.DataFrame:
                'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B']
     df = pd.read_csv(filepath, sep=r'\s+', names=columns, header=30, encoding_errors='ignore')
     df['Datetime'] = pd.to_datetime(df['MJD'], unit='D', origin='1899-12-30')
-    df['Time_sec'] = (df['Datetime'] - df['Datetime'].iloc[0]).dt.total_seconds()
+    df['Time_sec'] = np.arange(len(df), dtype=np.float64)
     
     # Compute P-M interferometric differences
     df['20 MHz Pol A (P-M)'] = df['P1_20A'] - df['M1_20A']
@@ -79,7 +79,22 @@ def parse_regi_with_time(filepath: str, pm6_start_dt: pd.Timestamp) -> pd.DataFr
             e_dt = pd.to_datetime(f"{current_date.date()} {row['End_Time']}:00")
             
             if e_dt < s_dt:
-                e_dt += pd.Timedelta(days=1)
+                # Detect and fix typos / rollover issues:
+                # A normal single transit session lasts at most ~2 hours.
+                # If adding 1 day makes it unreasonably long (> 2 hours), it is likely a typo.
+                e_dt_rolled = e_dt + pd.Timedelta(days=1)
+                duration_rolled = e_dt_rolled - s_dt
+                if duration_rolled <= pd.Timedelta(hours=2):
+                    e_dt = e_dt_rolled
+                else:
+                    # Typo where s_dt hour is likely written too late (e.g. 21:06 instead of 20:06).
+                    # If same-day s_dt is after e_dt by less than 2 hours, we shift s_dt back by 1 hour.
+                    time_diff = s_dt - e_dt
+                    if time_diff < pd.Timedelta(hours=2):
+                        s_dt -= pd.Timedelta(hours=1)
+                    else:
+                        # Fallback: just add 1 day
+                        e_dt = e_dt_rolled
 
             start_secs.append((s_dt - pm6_start_dt).total_seconds())
             end_secs.append((e_dt - pm6_start_dt).total_seconds())
