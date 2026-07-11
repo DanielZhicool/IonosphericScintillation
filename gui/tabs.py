@@ -3,6 +3,8 @@ import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import QRectF
 
+import core.config as cfg
+
 from gui.constants import MAIN_TAB_NAME, RAW_DATA_TITLE_TEMPLATE, IONOSPHERIC_TITLE, SPECTROGRAM_TITLE
 from gui.plotting import TimeAxisItem
 
@@ -56,7 +58,10 @@ class SignalTab(QWidget):
         axis_p3 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation='bottom')
         self.p3 = self.graph_widget.addPlot(title=SPECTROGRAM_TITLE, axisItems={'bottom': axis_p3}, row=3, col=0)
         self.p3.setXLink(self.p1)
-        self.p3.setLabel('left', 'Frequency', units='Hz')
+        if cfg.CWT_SHOW_PERIOD:
+            self.p3.setLabel('left', 'Period', units='s')
+        else:
+            self.p3.setLabel('left', 'Frequency', units='Hz')
         
         self.img_spec = pg.ImageItem()
         self.p3.addItem(self.img_spec)
@@ -66,7 +71,11 @@ class SignalTab(QWidget):
         
         self.cbar = pg.ColorBarItem(colorMap=cmap)
         self.cbar.setImageItem(self.img_spec, insert_in=self.p3)
-        self.cbar.getAxis('right').setLabel('Power', units='dB')
+        
+        if cfg.CWT_SHOW_LINEAR_AMP:
+            self.cbar.getAxis('right').setLabel('Amplitude')
+        else:
+            self.cbar.getAxis('right').setLabel('Power', units='dB')
 
     def _update_title(self):
         """Refresh the global metadata title at the top of the plot area."""
@@ -108,10 +117,15 @@ class SignalTab(QWidget):
 
     def update_filtered(self, filtered_signal):
         self.curve_filtered.setData(self.time_sec, filtered_signal)
+        self.p2.enableAutoRange(axis='y')
+        self.p2.autoRange()
 
     def update_spectrogram(self, img_data, lowcut, highcut):
         img_min = np.nanmin(img_data)
-        img_max = np.nanmax(img_data)
+        if cfg.CWT_SHOW_LINEAR_AMP:
+            img_max = np.nanpercentile(img_data, 99.5) if not np.all(np.isnan(img_data)) else 1.0
+        else:
+            img_max = np.nanmax(img_data)
         
         if np.isnan(img_min) or np.isnan(img_max):
             img_min, img_max = 0.0, 1.0
@@ -119,9 +133,6 @@ class SignalTab(QWidget):
             
         if img_max == img_min:
             img_max = img_min + 1e-6  # Prevent division by zero in colormap
-        
-        # Set image WITHOUT autoLevels so pyqtgraph doesn't interfere
-        self.img_spec.setImage(img_data, autoLevels=False)
         
         # Update Spectrogram Title with signal name
         source = self.tab_name if self.tab_name != 'Full Overview' else 'Full Overview'
@@ -132,7 +143,16 @@ class SignalTab(QWidget):
         # default [0,1] range, causing solid purple (or yellow) until recalculate is pressed.
         self.cbar.setLevels((img_min, img_max))
         
-        # Map image to its real frequency range
-        freq_height = highcut - lowcut
-        self.img_spec.setRect(QRectF(self.time_sec[0], lowcut, self.time_sec[-1]-self.time_sec[0], freq_height))
-        self.p3.setYRange(lowcut, highcut)
+        # Map image to its real range (Frequency vs. Period)
+        if cfg.CWT_SHOW_PERIOD:
+            img_data_to_plot = img_data  # No flip needed: short period is at bottom, long period at top
+            y_min, y_max = 1.0 / highcut, 1.0 / lowcut
+        else:
+            img_data_to_plot = img_data[:, ::-1]  # Flip to put lowest frequency at bottom
+
+        # Set image WITHOUT autoLevels so pyqtgraph doesn't interfere
+        self.img_spec.setImage(img_data_to_plot, autoLevels=False)
+        
+        y_height = y_max - y_min
+        self.img_spec.setRect(QRectF(self.time_sec[0], y_min, self.time_sec[-1]-self.time_sec[0], y_height))
+        self.p3.setYRange(y_min, y_max)

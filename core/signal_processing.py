@@ -237,7 +237,15 @@ def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, 
     return sosfiltfilt(sos, data_ready)
 
 
-def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcut: float, nv: int = None, use_ssq: bool = True) -> np.ndarray:
+def compute_cwt_spectrogram(
+    signal: np.ndarray,
+    fs: float,
+    lowcut: float,
+    highcut: float,
+    nv: int = None,
+    use_ssq: bool = True,
+    cancel_check: Optional[Callable[[], bool]] = None,
+) -> np.ndarray:
     """
     Computes a Continuous Wavelet Transform (CWT) spectrogram based on the Morse wavelet.
 
@@ -251,6 +259,7 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
         highcut: Upper frequency bound of interest in Hz.
         nv: Number of voices per octave. Defaults to cfg.CWT_NV.
         use_ssq: Whether to use Synchrosqueezing for enhanced time-frequency resolution.
+        cancel_check: Optional callback to check for cancellation request.
 
     Returns:
         2D numpy array representing the spectrogram image in (time, frequency) orientation.
@@ -262,7 +271,7 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
     from scipy.ndimage import gaussian_filter
 
     if nv is None:
-        nv = cfg.CWT_NV
+        nv = cfg.CWT_NV_BUBBLES if lowcut >= 1.0/150.0 - 1e-6 else cfg.CWT_NV_CLOUDS
         
     N = len(signal)
     if N == 0:
@@ -287,9 +296,11 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
         """Applies blur, contrast mapping, and pooling to a single chunk."""
         # Local 2D Gaussian blur (boundary effects are tiny compared to overlap)
         chunk_mag = gaussian_filter(chunk_mag, sigma=(cfg.GAUSSIAN_SIGMA_FREQ, cfg.GAUSSIAN_SIGMA_TIME))
-        # Log contrast
-        chunk_db = 20 * np.log10(np.maximum(chunk_mag, 1e-12))
-        return chunk_db
+        if cfg.CWT_SHOW_LINEAR_AMP:
+            return chunk_mag
+        else:
+            # Log contrast
+            return 20 * np.log10(np.maximum(chunk_mag, 1e-12))
 
     if N <= chunk_size:
         # Run on full signal
@@ -330,7 +341,8 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
         if pool_size > 1:
             pad_len = (pool_size - (Wx_db.shape[1] % pool_size)) % pool_size
             if pad_len > 0:
-                Wx_db = np.pad(Wx_db, ((0, 0), (0, pad_len)), constant_values=-np.inf)
+                pad_val = 0.0 if cfg.CWT_SHOW_LINEAR_AMP else -np.inf
+                Wx_db = np.pad(Wx_db, ((0, 0), (0, pad_len)), constant_values=pad_val)
             Wx_db = Wx_db.reshape(Wx_db.shape[0], -1, pool_size).max(axis=2)
     else:
         # Chunked processing to bound RAM usage
@@ -344,6 +356,8 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
         unpooled_buffer = None
         
         for i in range(num_chunks):
+            if cancel_check and cancel_check():
+                raise RuntimeError("Cancelled")
             start = i * step
             end = start + chunk_size
             
@@ -423,28 +437,33 @@ def compute_cwt_spectrogram(signal: np.ndarray, fs: float, lowcut: float, highcu
         # Flush the final unpooled buffer seamlessly
         if pool_size > 1 and unpooled_buffer is not None and unpooled_buffer.shape[1] > 0:
             pad_len = pool_size - unpooled_buffer.shape[1]
-            padded_buffer = np.pad(unpooled_buffer, ((0, 0), (0, pad_len)), constant_values=-np.inf)
+            pad_val = 0.0 if cfg.CWT_SHOW_LINEAR_AMP else -np.inf
+            padded_buffer = np.pad(unpooled_buffer, ((0, 0), (0, pad_len)), constant_values=pad_val)
             pooled = padded_buffer.reshape(padded_buffer.shape[0], -1, pool_size).max(axis=2)
             Wx_db_chunks.append(pooled)
             
         Wx_db = np.concatenate(Wx_db_chunks, axis=1)
 
-    # Dynamic Range Clipping
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        if np.all(np.isnan(Wx_db)):
-            max_db = 0.0
-        else:
-            if use_ssq:
-                # nanpercentile is extremely fast now since Wx_db is highly compressed
-                max_db = np.nanpercentile(Wx_db, 99.9)
+    if cfg.CWT_SHOW_LINEAR_AMP:
+        # Return transposed (time, frequency) directly
+        return Wx_db.T
+    else:
+        # Dynamic Range Clipping in dB
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            if np.all(np.isnan(Wx_db)):
+                max_db = 0.0
             else:
-                max_db = np.nanmax(Wx_db)
+                if use_ssq:
+                    # nanpercentile is extremely fast now since Wx_db is highly compressed
+                    max_db = np.nanpercentile(Wx_db, 99.9)
+                else:
+                    max_db = np.nanmax(Wx_db)
+            
+        Wx_contrast = np.clip(Wx_db, a_min=max_db - cfg.CWT_DYNAMIC_RANGE_DB, a_max=max_db)
         
-    Wx_contrast = np.clip(Wx_db, a_min=max_db - cfg.CWT_DYNAMIC_RANGE_DB, a_max=max_db)
-    
-    # Return transposed (time, frequency) for pyqtgraph
-    return Wx_contrast.T
+        # Return transposed (time, frequency) for pyqtgraph
+        return Wx_contrast.T
 
 
 def process_signal_pipeline(
@@ -456,6 +475,8 @@ def process_signal_pipeline(
     n_sigmas: float = None,
     apply_smoothing: bool = True,
     progress_callback: Optional[Callable[[int], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    nv: int = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Full processing pipeline for the interactive UI.
@@ -494,12 +515,12 @@ def process_signal_pipeline(
     N_orig = len(raw_signal)
     actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= cfg.PCHIP_LONG_SIGNAL_THRESHOLD else 1
     
-    # Because compute_cwt_spectrogram now uses intelligent chunking,
-    # we can safely run Synchrosqueezing (use_ssq=True) and full nv 
-    # without any memory crashes, regardless of signal length.
     should_use_ssq = True
-    actual_nv = cfg.CWT_NV
+    actual_nv = nv if nv is not None else (cfg.CWT_NV_BUBBLES if lowcut >= 1.0/150.0 - 1e-6 else cfg.CWT_NV_CLOUDS)
     
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled")
+
     # 2. PCHIP Upsampling (skipped if actual_pchip_factor == 1)
     if actual_pchip_factor > 1:
         upsampled_sig, new_fs = upsample_pchip(cleaned_sig, fs, factor=actual_pchip_factor)
@@ -507,6 +528,8 @@ def process_signal_pipeline(
         upsampled_sig, new_fs = cleaned_sig, fs
         
     if progress_callback: progress_callback(30)
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled")
     
     # 3. Bandpass filtering at HIGH frequency (new_fs)
     filtered_sig = bandpass_filter(upsampled_sig, lowcut, highcut, new_fs)
@@ -514,10 +537,11 @@ def process_signal_pipeline(
     # Downsample back for 1D plot so time axis in UI doesn't stretch
     filtered_sig_downsampled = filtered_sig[::actual_pchip_factor]
     if progress_callback: progress_callback(40)
+    if cancel_check and cancel_check():
+        raise RuntimeError("Cancelled")
     
     # 4. Compute CWT at HIGH frequency (perfect phase detail)
-    # Use Synchrosqueezing only for short signals to prevent MemoryErrors
-    img_data = compute_cwt_spectrogram(filtered_sig, new_fs, lowcut, highcut, nv=actual_nv, use_ssq=should_use_ssq)
+    img_data = compute_cwt_spectrogram(filtered_sig, new_fs, lowcut, highcut, nv=actual_nv, use_ssq=should_use_ssq, cancel_check=cancel_check)
     if progress_callback: progress_callback(100)
     
     # Return directly, img_data is already optimally pooled internally!

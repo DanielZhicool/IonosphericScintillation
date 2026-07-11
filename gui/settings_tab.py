@@ -12,21 +12,21 @@ from PySide6.QtWidgets import (
 # ---------------------------------------------------------------------------
 _BUILTIN_PRESETS = {
     "Default": {
-        "CWT_NV": 256, "MORSE_GAMMA": 3.0, "MORSE_BETA": 30.0,
+        "CWT_NV_BUBBLES": 64, "CWT_NV_CLOUDS": 128, "MORSE_GAMMA": 3.0, "MORSE_BETA": 30.0,
         "GAUSSIAN_SIGMA_FREQ": 1.0, "GAUSSIAN_SIGMA_TIME": 1.0,
         "CWT_DYNAMIC_RANGE_DB": 40.0,
         "MTM_N_TAPERS": 7, "MTM_NW": 4.0, "FTEST_CONFIDENCE": 0.95,
         "CROSS_SPECTRUM_DX": 2500.0, "VELOCITY_N_PEAKS": 3, "PCHIP_FACTOR": 3,
     },
     "High Resolution": {
-        "CWT_NV": 512, "MORSE_GAMMA": 3.0, "MORSE_BETA": 50.0,
+        "CWT_NV_BUBBLES": 128, "CWT_NV_CLOUDS": 256, "MORSE_GAMMA": 3.0, "MORSE_BETA": 50.0,
         "GAUSSIAN_SIGMA_FREQ": 0.5, "GAUSSIAN_SIGMA_TIME": 0.5,
         "CWT_DYNAMIC_RANGE_DB": 60.0,
         "MTM_N_TAPERS": 10, "MTM_NW": 4.0, "FTEST_CONFIDENCE": 0.999,
         "CROSS_SPECTRUM_DX": 2500.0, "VELOCITY_N_PEAKS": 5, "PCHIP_FACTOR": 4,
     },
     "Fast Preview": {
-        "CWT_NV": 64, "MORSE_GAMMA": 3.0, "MORSE_BETA": 20.0,
+        "CWT_NV_BUBBLES": 32, "CWT_NV_CLOUDS": 64, "MORSE_GAMMA": 3.0, "MORSE_BETA": 20.0,
         "GAUSSIAN_SIGMA_FREQ": 1.5, "GAUSSIAN_SIGMA_TIME": 1.5,
         "CWT_DYNAMIC_RANGE_DB": 40.0,
         "MTM_N_TAPERS": 5, "MTM_NW": 4.0, "FTEST_CONFIDENCE": 0.95,
@@ -83,7 +83,8 @@ class SettingsDialog(QDialog):
         self.inputs = {}
 
         # CWT Params
-        self.add_spinbox("CWT_NV (Voices per octave)", "CWT_NV", cfg.CWT_NV, 16, 512, step=16)
+        self.add_spinbox("CWT_NV Bubbles (Voices per octave)", "CWT_NV_BUBBLES", cfg.CWT_NV_BUBBLES, 16, 512, step=16)
+        self.add_spinbox("CWT_NV Clouds (Voices per octave)", "CWT_NV_CLOUDS", cfg.CWT_NV_CLOUDS, 16, 512, step=16)
         self.add_double_spinbox("MORSE_GAMMA (Wavelet symmetry)", "MORSE_GAMMA", cfg.MORSE_GAMMA, 1.0, 10.0, step=1.0)
         self.add_double_spinbox("MORSE_BETA (Wavelet time-bandwidth)", "MORSE_BETA", cfg.MORSE_BETA, 1.0, 120.0, step=1.0)
         self.add_double_spinbox("GAUSSIAN_SIGMA_FREQ (Blur frequency)", "GAUSSIAN_SIGMA_FREQ", cfg.GAUSSIAN_SIGMA_FREQ, 0.0, 10.0, step=0.1)
@@ -210,7 +211,8 @@ class SettingsDialog(QDialog):
     # Apply to live config
     # ------------------------------------------------------------------
     def apply_settings(self):
-        cfg.CWT_NV = self.inputs["CWT_NV"].value()
+        cfg.CWT_NV_BUBBLES = self.inputs["CWT_NV_BUBBLES"].value()
+        cfg.CWT_NV_CLOUDS = self.inputs["CWT_NV_CLOUDS"].value()
         cfg.MORSE_GAMMA = self.inputs["MORSE_GAMMA"].value()
         cfg.MORSE_BETA = self.inputs["MORSE_BETA"].value()
         cfg.GAUSSIAN_SIGMA_FREQ = self.inputs["GAUSSIAN_SIGMA_FREQ"].value()
