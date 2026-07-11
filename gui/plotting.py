@@ -1,6 +1,5 @@
 import pandas as pd
 import pyqtgraph as pg
-import numpy as np
 
 class TimeAxisItem(pg.AxisItem):
     """Custom X axis: show absolute time (HH:MM:SS) instead of seconds."""

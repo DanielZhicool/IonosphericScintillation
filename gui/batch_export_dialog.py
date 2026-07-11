@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QLabel, QFileDialog, QMessageBox, QGroupBox, 
     QCheckBox, QAbstractItemView, QComboBox
 )
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QThread, Signal
 
 from core.signal_processing import process_signal_pipeline
 from core.spectral_analysis import run_spectral_pipeline
@@ -71,7 +71,8 @@ class BatchExportWorker(QThread):
                     'selected_channels': self.selected_channels,
                     'bands': self.bands,
                     'cwt_config': {
-                        'nv': cfg.CWT_NV,
+                        'nv_bubbles': cfg.CWT_NV_BUBBLES,
+                        'nv_clouds': cfg.CWT_NV_CLOUDS,
                         'gamma': cfg.MORSE_GAMMA,
                         'beta': cfg.MORSE_BETA,
                         'sigma_freq': cfg.GAUSSIAN_SIGMA_FREQ,
@@ -91,8 +92,6 @@ class BatchExportWorker(QThread):
             total_tasks = len(self.selected_sessions) * len(self.selected_channels) * len(self.bands) + spectral_tasks
             tasks_done = 0
             saved_count = 0
-
-            time_full = self.df_pm6['Time_sec'].values
 
             for session in self.selected_sessions:
                 if self._is_cancelled:
@@ -314,7 +313,8 @@ class BatchExportWorker(QThread):
                             f_sig, i_data = process_signal_pipeline(
                                 raw_signal, self.fs, cwt_low, cwt_high, 
                                 self.window_size, self.n_sigmas, self.apply_smoothing,
-                                progress_callback=lambda x: None
+                                progress_callback=lambda x: None,
+                                cancel_check=lambda: self._is_cancelled
                             )
                             filtered_sig = f_sig
                             img_data = i_data
@@ -351,10 +351,23 @@ class BatchExportWorker(QThread):
                             if 'spectrogram' in time_plots:
                                 ax = axes[ax_idx]; ax_idx += 1
                                 t0, t1 = time_h[0], time_h[-1]
-                                im = ax.imshow(img_data.T, aspect='auto', origin='lower',
-                                               extent=[t0, t1, cwt_low, cwt_high], cmap='viridis')
-                                plt.colorbar(im, ax=ax, label='Power (dB)')
-                                ax.set_ylabel("Frequency (Hz)")
+                                if cfg.CWT_SHOW_PERIOD:
+                                    plot_img = img_data.T
+                                    y_min, y_max = 1.0 / cwt_high, 1.0 / cwt_low
+                                    y_label = "Period (Sec)"
+                                else:
+                                    plot_img = img_data[:, ::-1].T
+                                    y_min, y_max = cwt_low, cwt_high
+                                    y_label = "Frequency (Hz)"
+                                    
+                                cbar_label = 'Wavelet Amplitude' if cfg.CWT_SHOW_LINEAR_AMP else 'Power (dB)'
+                                vmax = np.nanpercentile(plot_img, 99.5) if cfg.CWT_SHOW_LINEAR_AMP else np.nanmax(plot_img)
+                                im = ax.imshow(plot_img, aspect='auto', origin='lower',
+                                               extent=[t0, t1, y_min, y_max], cmap='viridis',
+                                               vmin=0.0 if cfg.CWT_SHOW_LINEAR_AMP else None,
+                                               vmax=vmax)
+                                plt.colorbar(im, ax=ax, label=cbar_label)
+                                ax.set_ylabel(y_label)
                                 ax.set_title(f"CWT Spectrogram ({band_key})")
                                 
                             for ax in axes:
@@ -415,9 +428,13 @@ class BatchExportWorker(QThread):
                 self.progress.emit(100, "Cancelled.")
                 self.error.emit("Export was cancelled.")
                 
-        except Exception:
-            err = traceback.format_exc()
-            self.error.emit(err)
+        except Exception as e:
+            if str(e) == "Cancelled" or self._is_cancelled:
+                self.progress.emit(100, "Cancelled.")
+                self.error.emit("Export was cancelled.")
+            else:
+                err = traceback.format_exc()
+                self.error.emit(err)
 
 
 class BatchExportDialog(QDialog):
@@ -570,16 +587,28 @@ class BatchExportDialog(QDialog):
             
     def close_or_cancel(self):
         if self.worker and self.worker.isRunning():
+            try:
+                self.worker.finished_ok.disconnect()
+                self.worker.error.disconnect()
+                self.worker.progress.disconnect()
+            except RuntimeError:
+                pass
             self.worker.cancel()
-            self.btn_cancel.setText("Cancelling...")
-            self.btn_cancel.setEnabled(False)
+            self.worker.finished.connect(self.worker.deleteLater)
+            self.reject()
         else:
             self.reject()
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
+            try:
+                self.worker.finished_ok.disconnect()
+                self.worker.error.disconnect()
+                self.worker.progress.disconnect()
+            except RuntimeError:
+                pass
             self.worker.cancel()
-            self.worker.wait()
+            self.worker.finished.connect(self.worker.deleteLater)
         super().closeEvent(event)
 
     def start_export(self):

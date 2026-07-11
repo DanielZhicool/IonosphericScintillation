@@ -6,7 +6,7 @@ Cross-Spectrum, and ionospheric drift velocity results.
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget, QTextEdit, QSplitter,
+    QWidget, QVBoxLayout, QTabWidget, QTextEdit,
 )
 from PySide6.QtCore import Qt
 from scipy.signal import find_peaks

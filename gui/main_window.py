@@ -20,7 +20,7 @@ from gui.constants import (
     MSG_LOG_PROCESSING_ERROR_TITLE, MSG_LOG_PROCESSING_RESULT_TITLE,
     MSG_NO_LOG_EVENTS_TEXT, MSG_NO_LOG_EVENTS_TITLE,
     MSG_NO_PM6_SELECTED_TEXT, MSG_NO_PM6_SELECTED_TITLE,
-    MSG_OPEN_ERROR_TITLE, MSG_SAVE_ERROR_TITLE,
+    MSG_SAVE_ERROR_TITLE,
     MSG_SKIPPED_TABS_TEMPLATE, MSG_TAB_CREATION_NONE,
     MSG_SPECTRAL_NO_SOURCE_TITLE, MSG_SPECTRAL_NO_SOURCE_TEXT,
     MSG_SPECTRAL_ERROR_TITLE, SPECTRAL_TAB_SUFFIX,
@@ -28,11 +28,12 @@ from gui.constants import (
     MSG_CREATED_TABS_TEMPLATE, CHANNELS
 )
 
-from gui.plotting import TimeAxisItem
+
 from gui.tabs import SignalTab
 from gui.spectral_tab import SpectralTab
 from gui.settings_tab import SettingsDialog
 from gui.workers import SpectralAnalysisWorker, SignalAnalysisWorker
+import core.config as cfg
 
 
 class Uran4App(QMainWindow):
@@ -807,11 +808,17 @@ class Uran4App(QMainWindow):
                     t0 = active_tab.time_sec[0] / 3600.0
                     t1 = active_tab.time_sec[-1] / 3600.0
                     rect = active_tab.img_spec.boundingRect()
-                    f0, f1 = rect.top(), rect.bottom()
+                    y_min = rect.y()
+                    y_max = rect.y() + rect.height()
+                    cbar_label = 'Wavelet Amplitude' if cfg.CWT_SHOW_LINEAR_AMP else 'Power (dB)'
+                    vmax = np.nanpercentile(img, 99.5) if cfg.CWT_SHOW_LINEAR_AMP else np.nanmax(img)
                     im = ax.imshow(img.T, aspect='auto', origin='lower',
-                                   extent=[t0, t1, f0, f1], cmap='viridis')
-                    plt.colorbar(im, ax=ax, label='Power (dB)')
-                ax.set_ylabel("Frequency (Hz)")
+                                   extent=[t0, t1, y_min, y_max], cmap='viridis',
+                                   vmin=0.0 if cfg.CWT_SHOW_LINEAR_AMP else None,
+                                   vmax=vmax)
+                    plt.colorbar(im, ax=ax, label=cbar_label)
+                y_label = "Period (Sec)" if cfg.CWT_SHOW_PERIOD else "Frequency (Hz)"
+                ax.set_ylabel(y_label)
                 ax.set_title("CWT Spectrogram")
 
             axes[-1].set_xlabel("Time (hours from start)")
