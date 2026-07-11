@@ -86,13 +86,31 @@ def fill_gap_with_red_noise(
     left_context = signal_cleaned[max(0, start_idx - context_window) : start_idx]
     right_context = signal_cleaned[end_idx : min(N, end_idx + context_window)]
 
-    valid_context = np.concatenate([left_context, right_context])
-    if len(valid_context) == 0:
-        return signal_cleaned
+    means = []
+    mads = []
 
-    target_mean = np.median(valid_context)
-    mad = np.median(np.abs(valid_context - target_mean))
-    target_std = 1.4826 * mad if mad > 0 else 1.0
+    if len(left_context) > 0:
+        l_mean = np.median(left_context)
+        means.append(l_mean)
+        mads.append(np.median(np.abs(left_context - l_mean)))
+
+    if len(right_context) > 0:
+        r_mean = np.median(right_context)
+        means.append(r_mean)
+        mads.append(np.median(np.abs(right_context - r_mean)))
+
+    if len(means) == 0:
+        # Fall back to the gap itself if no surrounding context is available
+        gap_data = signal_cleaned[start_idx:end_idx]
+        if len(gap_data) == 0:
+            return signal_cleaned
+        target_mean = np.median(gap_data)
+        mad = np.median(np.abs(gap_data - target_mean))
+        target_std = 1.4826 * mad if mad > 0 else 1.0
+    else:
+        target_mean = np.mean(means)
+        mad = np.mean(mads)
+        target_std = 1.4826 * mad if mad > 0 else 1.0
 
     length = end_idx - start_idx
     r = 0.95

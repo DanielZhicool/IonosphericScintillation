@@ -14,7 +14,7 @@ This suite integrates a range of digital signal processing (DSP) and statistical
 * **Hampel Filter (Outlier Detection):** Uses a rolling median and Median Absolute Deviation (MAD) to detect and remove industrial impulse noise/spikes.
 * **Savitzky-Golay Filter:** Applies polynomial smoothing to reconstruct signal continuity while preserving the physical amplitude of ionospheric scintillations.
 * **PCHIP Interpolation:** Upsamples the signal ($3\times$) using Piecewise Cubic Hermite Interpolating Polynomials to increase detail without introducing the ringing artifacts (overshoot) common in spline interpolation.
-* **Red Noise Generation:** Synthesizes AR(1) red noise to fill calibration gaps. Edges are blended with a cosine cross-fade (up to 32 samples) so the join is seamless and the interior retains the correct f⁻² spectral slope — a linear ramp would inject low-frequency power and bias the spectrum.
+* **Red Noise Generation:** Synthesizes AR(1) red noise to fill calibration gaps. The noise is scaled using robust local statistics (median and MAD) computed independently for the left and right context windows (with fallback to the gap itself if empty) to prevent level steps from artificially inflating the noise variance. Edges are blended with a cosine cross-fade (up to 32 samples) so the join is seamless and the interior retains the correct f⁻² spectral slope — a linear ramp would inject low-frequency power and bias the spectrum.
 * **Tukey Windowing:** Applies a tapered cosine window to the signal boundaries to suppress edge artifacts ("edge fans") during Fourier and Wavelet transforms.
 
 ### 2. Wavelet & Time-Frequency Analysis
