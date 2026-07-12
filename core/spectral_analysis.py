@@ -7,8 +7,8 @@ Implements the Thomson Multitaper spectral analysis pipeline:
   Step 12: Cross-spectral analysis (20 MHz vs 25 MHz)
   Step 13: Ionospheric drift velocity estimation
 """
-
 import numpy as np
+from typing import Callable, Optional
 from scipy.signal.windows import dpss
 from scipy.signal import detrend, find_peaks
 from scipy.stats import f as f_dist
@@ -106,6 +106,8 @@ def compute_ftest(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float
         freqs: frequency array (Hz).
         f_stat: F-statistic at each frequency.
         threshold: critical value of F(2, 2K-2) at *confidence*.
+        T0: dominant oscillation period (s), or None if no
+            significant peak is found.
     """
     if n_tapers is None: n_tapers = cfg.MTM_N_TAPERS
     if nw is None: nw = cfg.MTM_NW
@@ -224,7 +226,7 @@ def compute_cross_spectrum(sig1: np.ndarray, sig2: np.ndarray, fs: float,
 
 
 def find_spectral_peaks(power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, highcut_hz: float,
-                        n_peaks: int = None) -> tuple[list[float], list[float]]:
+                        n_peaks: int = None) -> np.ndarray:
     """
     Find the *n_peaks* strongest spectral peaks within a frequency band.
 
@@ -235,7 +237,7 @@ def find_spectral_peaks(power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, 
         n_peaks: number of peaks to return.
 
     Returns:
-        peak_indices: array of indices into *freqs* / *power*.
+        peak_indices: 1-D array of indices into *freqs* / *power*.
     """
     if n_peaks is None: n_peaks = cfg.VELOCITY_N_PEAKS
     band_mask = (freqs >= lowcut_hz) & (freqs <= highcut_hz)
@@ -294,8 +296,6 @@ def estimate_velocities(cross_phase_deg: np.ndarray, freqs: np.ndarray, peak_ind
         })
     return results
 
-
-from typing import Callable, Optional
 
 def run_spectral_pipeline(pm_signals: dict[str, np.ndarray], fs: float, lowcut: float, highcut: float,
                           window_size: int, n_sigmas: float, apply_smoothing: bool, progress_callback: Optional[Callable[[int], None]] = None) -> dict:

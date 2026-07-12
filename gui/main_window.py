@@ -48,6 +48,7 @@ class Uran4App(QMainWindow):
         self.full_time = None
         self.pm6_start_dt = None
         self.sessions = []
+        self.worker = None
         self._pending_reanalysis = False
         
         self.init_ui()
@@ -690,8 +691,6 @@ class Uran4App(QMainWindow):
                 QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
 
             self.worker.progress.connect(self.progress_bar.setValue)
-            self.worker.finished_cb = on_finished
-            self.worker.error_cb = on_error
             self.worker.finished.connect(on_finished)
             self.worker.error.connect(on_error)
             self.worker.start()
@@ -912,8 +911,6 @@ class Uran4App(QMainWindow):
                 QMessageBox.critical(self, MSG_ANALYSIS_ERROR_TITLE, f"Failed to build plots:\n{err_str}")
 
             self.worker.progress.connect(self.progress_bar.setValue)
-            self.worker.finished_cb = on_finished
-            self.worker.error_cb = on_error
             self.worker.finished.connect(on_finished)
             self.worker.error.connect(on_error)
             self.worker.start()
@@ -988,8 +985,6 @@ class Uran4App(QMainWindow):
                 QMessageBox.critical(self, MSG_SPECTRAL_ERROR_TITLE, f"Global spectral analysis failed:\n{err_str}")
 
             self.worker.progress.connect(self.progress_bar.setValue)
-            self.worker.finished_cb = on_finished
-            self.worker.error_cb = on_error
             self.worker.finished.connect(on_finished)
             self.worker.error.connect(on_error)
             self.worker.start()

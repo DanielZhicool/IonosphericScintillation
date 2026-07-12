@@ -3,6 +3,10 @@ from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
+from scipy.interpolate import pchip_interpolate
+from scipy.ndimage import gaussian_filter
+from scipy.signal import butter, detrend, lfilter, savgol_filter, sosfiltfilt
+from scipy.signal.windows import tukey
 
 import core.config as cfg
 
@@ -41,7 +45,6 @@ def clean_and_smooth_signal(signal: np.ndarray, window_size: int = None, n_sigma
     
     # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
-        from scipy.signal import savgol_filter
         smooth_window = window_size if window_size % 2 != 0 else window_size + 1
         if smooth_window > 3:
             cleaned_signal = savgol_filter(cleaned_signal, window_length=smooth_window, polyorder=polyorder)
@@ -75,7 +78,6 @@ def fill_gap_with_red_noise(
     Returns:
         1D numpy array with the gap filled.
     """
-    from scipy.signal import lfilter
 
     signal_cleaned = signal.copy()
     N = len(signal_cleaned)
@@ -194,8 +196,6 @@ def upsample_pchip(signal: np.ndarray, fs: float, factor: int = None) -> tuple[n
     
     new_N = N * factor
     t_new = np.linspace(t[0], t[-1], new_N)
-    
-    from scipy.interpolate import pchip_interpolate
 
     new_signal = pchip_interpolate(t, signal, t_new)
     new_fs = fs * factor
@@ -217,13 +217,8 @@ def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, 
     Returns:
         1D numpy array of the filtered signal.
     """
-    from scipy.signal import butter, sosfiltfilt, detrend
-    from scipy.signal.windows import tukey
-
-    # 1. Remove DC offset first, then remove linear trend (baseline drift).
-    #    Doing constant-detrend before linear-detrend avoids a residual step at
-    #    the edges when the signal has a nonzero mean after slope removal.
-    data_detrended = detrend(detrend(data, type='constant'), type='linear')
+    # Remove linear trend (baseline drift); this also removes the DC offset.
+    data_detrended = detrend(data, type='linear')
 
     # 2. Smoothly taper 5% at the edges to zero to avoid filter shock
     window = tukey(len(data_detrended), alpha=0.05)
@@ -257,18 +252,18 @@ def compute_cwt_spectrogram(
         fs: Sampling frequency in Hz.
         lowcut: Lower frequency bound of interest in Hz.
         highcut: Upper frequency bound of interest in Hz.
-        nv: Number of voices per octave. Defaults to cfg.CWT_NV.
+        nv: Number of voices per octave. Defaults to cfg.CWT_NV_BUBBLES
+            or cfg.CWT_NV_CLOUDS depending on the band.
         use_ssq: Whether to use Synchrosqueezing for enhanced time-frequency resolution.
         cancel_check: Optional callback to check for cancellation request.
 
     Returns:
         2D numpy array representing the spectrogram image in (time, frequency) orientation.
     """
+    # Deferred: ssqueezepy is heavy and only needed for CWT computation
     from ssqueezepy import ssq_cwt, cwt, Wavelet
     from ssqueezepy.utils import make_scales
     from ssqueezepy.wavelets import center_frequency
-    from scipy.signal.windows import tukey
-    from scipy.ndimage import gaussian_filter
 
     if nv is None:
         nv = cfg.CWT_NV_BUBBLES if lowcut >= 1.0/150.0 - 1e-6 else cfg.CWT_NV_CLOUDS
@@ -493,6 +488,8 @@ def process_signal_pipeline(
         n_sigmas: Outlier threshold. Defaults to cfg.DEFAULT_N_SIGMAS.
         apply_smoothing: Whether to apply Savitzky-Golay smoothing.
         progress_callback: Optional callback taking an integer percentage (0-100).
+        cancel_check: Optional callback returning True to abort early.
+        nv: Override for voices-per-octave (CWT resolution).
 
     Returns:
         A tuple of (downsampled_filtered_signal, spectrogram_image_data).

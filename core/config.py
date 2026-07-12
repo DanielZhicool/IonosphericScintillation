@@ -29,7 +29,7 @@ CWT_DYNAMIC_RANGE_DB = 40.0
 CWT_SHOW_PERIOD = True        # True to show Period (Sec) on Y-axis, False to show Frequency (mHz)
 CWT_SHOW_LINEAR_AMP = True    # True to show linear wavelet amplitude on colorbar, False to show Power (dB)
 
-# Spectral-Correlation Analysis (Steps 10-13)
+# Spectral-Correlation Analysis (MTM PSD, F-Test, Cross-Spectrum, IDVE)
 MTM_N_TAPERS = 7          # Number of DPSS tapers (Thomson Multitaper)
 MTM_NW = 4.0              # Time-bandwidth product for DPSS windows
 FTEST_CONFIDENCE = 0.95   # F-test significance level

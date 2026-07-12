@@ -149,6 +149,7 @@ class SignalTab(QWidget):
             y_min, y_max = 1.0 / highcut, 1.0 / lowcut
         else:
             img_data_to_plot = img_data[:, ::-1]  # Flip to put lowest frequency at bottom
+            y_min, y_max = lowcut, highcut
 
         # Set image WITHOUT autoLevels so pyqtgraph doesn't interfere
         self.img_spec.setImage(img_data_to_plot, autoLevels=False)

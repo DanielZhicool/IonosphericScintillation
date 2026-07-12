@@ -6,6 +6,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+import core.config as cfg
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QPushButton, 
     QProgressBar, QLabel, QFileDialog, QMessageBox, QGroupBox, 
@@ -62,7 +64,6 @@ class BatchExportWorker(QThread):
             # Save batch configuration settings
             if self.selected_sessions:
                 import json
-                import core.config as cfg
                 settings = {
                     'window_size': self.window_size,
                     'n_sigmas': self.n_sigmas,
@@ -110,13 +111,8 @@ class BatchExportWorker(QThread):
                 session_dt = self.df_pm6['Datetime'].iloc[s_idx]
                 date_str = session_dt.strftime('%Y%m%d')
                 
-                # Check if we need spectral analysis
-                needs_spectral = (self.graphs_config.get('psd', False) or 
-                                  self.graphs_config.get('ftest', False) or 
-                                  self.graphs_config.get('cross', False) or 
-                                  self.graphs_config.get('idve', False))
                 spectral_results = None
-                
+
                 if needs_spectral:
                     pm_signals = {
                         '20 MHz Pol A': df_slice['P1_20A'].values - df_slice['M1_20A'].values,
@@ -161,9 +157,9 @@ class BatchExportWorker(QThread):
                             for ch_name, r, c in chs:
                                 ax = axes[r, c]
                                 if ch_name in res['psd']:
-                                    vals = res['psd'][ch_name][mask][::-1]
+                                    vals_linear = res['psd'][ch_name][mask][::-1]
+                                    vals = 10.0 * np.log10(np.maximum(vals_linear, 1e-30))
                                     ax.plot(periods, vals, color='#42A5F5', linewidth=1.0)
-                                    ax.set_yscale('log')
                                     ax.set_xlabel("Period (Sec)")
                                     ax.set_ylabel("Spectral Power (dB)")
                                     ax.grid(True, alpha=0.3)
@@ -636,7 +632,8 @@ class BatchExportDialog(QDialog):
             'band_selection': self.combo_band.currentText()
         }
         
-        if not any(graphs_config.values()) and not any(v for k, v in graphs_config.items() if isinstance(v, bool)):
+        plot_keys = ('raw', 'filtered', 'spectrogram', 'psd', 'ftest', 'cross', 'idve')
+        if not any(graphs_config.get(k) for k in plot_keys):
             QMessageBox.warning(self, "Error", "Please select at least one plot type.")
             return
 

@@ -1,7 +1,7 @@
 [project]
 name = "ionosphericscintillation"
 version = "0.1.0"
-description = "Add your description here"
+description = "Signal processing and time-frequency analysis suite for URAN-4 ionospheric scintillation data"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

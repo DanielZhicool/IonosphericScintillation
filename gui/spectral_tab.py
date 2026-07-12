@@ -148,13 +148,14 @@ class SpectralTab(QWidget):
             p.setLabel('left', 'Spectral Power (dB)')
             p.showGrid(x=True, y=True)
             p.setXRange(p_min, p_max)
-            p.setLogMode(x=False, y=True)
+            p.setLogMode(x=False, y=False)
             if link_plot is None:
                 link_plot = p
             else:
                 p.setXLink(link_plot)
 
-            vals = data_dict[ch_name][mask][::-1]
+            vals_linear = data_dict[ch_name][mask][::-1]
+            vals = 10.0 * np.log10(np.maximum(vals_linear, 1e-30))
             p.plot(periods, vals, pen=pg.mkPen('#42A5F5', width=1.0))  # uniform blue
 
             peaks, _ = find_peaks(vals, distance=max(1, len(vals) // 50))
