@@ -98,12 +98,49 @@ Initial position            |  Expand selection  |  Fill selection
 *   Click **"7. Global Spectral Analysis"** to process the entire dataset.
 *   View the results in the newly opened sub-tabs: **Multitaper PSD**, **Thomson F-Test**, **Cross-Spectrum**, and **Ionospheric Drift Velocity Estimation** (which includes detected periods $T\_0$, $2T$, $3T$ and the estimated horizontal drift velocities calculated from the 20 MHz and 25 MHz beams).
 
-Multitaper PSD | Thomson F-Test | Cross-Spectrum
-:-------------------------:|:-------------------------:|:-------------------------:
-![Multitaper PSD](images/multitaper_psd.png)  |  ![Thomson F-Test](images/thomson_f_test.png) | ![Cross-Spectrum](images/cross_spectrum.png)
+<table width="100%">
+  <!-- Row 1: Multitaper PSD -->
+  <tr>
+    <td width="60%" align="center">
+      <img src="images/multitaper_psd.png" alt="Multitaper PSD" width="100%">
+    </td>
+    <td width="40%" valign="top" style="padding-left: 15px;">
+      <h4>Multitaper PSD</h4>
+      <p>Computes the Power Spectral Density using Thomson's multitaper method. This provides a low-variance, low-bias estimate of the signal's power distribution across frequencies, minimizing spectral leakage to reveal subtle spectral features.</p>
+    </td>
+  </tr>
+  <!-- Row 2: Thomson F-Test -->
+  <tr>
+    <td width="60%" align="center">
+      <img src="images/thomson_f_test.png" alt="Thomson F-Test" width="100%">
+    </td>
+    <td width="40%" valign="top" style="padding-left: 15px;">
+      <h4>Thomson F-Test</h4>
+      <p>Applies a statistical F-test to detect deterministic harmonic lines (periodic oscillations) against the continuous red-noise background, identifying the fundamental oscillation period and its harmonics.</p>
+    </td>
+  </tr>
+  <!-- Row 3: Cross-Spectrum -->
+  <tr>
+    <td width="60%" align="center">
+      <img src="images/cross_spectrum.png" alt="Cross-Spectrum" width="100%">
+    </td>
+    <td width="40%" valign="top" style="padding-left: 15px;">
+      <h4>Cross-Spectrum</h4>
+      <p>Analyzes the phase and coherence relationship between the 20 MHz and 25 MHz receiver channels, showing where the signals are highly correlated and how their phases shift.</p>
+    </td>
+  </tr>
+  <!-- Row 4: Drift Velocity Estimation -->
+  <tr>
+    <td width="60%" align="center">
+      <img src="images/ionospheric_drift_velocity_estimation.png" alt="Ionospheric Drift Velocity Estimation" width="100%">
+    </td>
+    <td width="40%" valign="top" style="padding-left: 15px;">
+      <h4>Ionospheric Drift Velocity Estimation (IDVE)</h4>
+      <p>Estimates the horizontal drift velocity of ionospheric structures based on the cross-spectral phase slope, translating the detected periods ($T_0, 2T, 3T$) and time delays into physical speeds.</p>
+    </td>
+  </tr>
+</table>
 
-Ionospheric Drift Velocity Estimation
-![Ionospheric Drift Velocity Estimation](images/ionospheric_drift_velocity_estimation.png)
 
 ### 5\. Exporting Results
 <div align="center">
