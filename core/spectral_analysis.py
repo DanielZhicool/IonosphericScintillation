@@ -7,21 +7,31 @@ Implements the Thomson Multitaper spectral analysis pipeline:
   Step 12: Cross-spectral analysis (20 MHz vs 25 MHz)
   Step 13: Ionospheric drift velocity estimation
 """
+
+from collections.abc import Callable
+from typing import Any
+
 import numpy as np
-from typing import Callable, Optional
-from scipy.signal.windows import dpss
 from scipy.signal import detrend, find_peaks
+from scipy.signal.windows import dpss
 from scipy.stats import f as f_dist
 
 import core.config as cfg
 from core.signal_processing import (
-    clean_and_smooth_signal,
     bandpass_filter,
+    clean_and_smooth_signal,
 )
 
 
-def _prepare_signal(raw_signal: np.ndarray, fs: float, lowcut: float, highcut: float,
-                    window_size: int, n_sigmas: float, apply_smoothing: bool) -> tuple[np.ndarray, float]:
+def _prepare_signal(
+    raw_signal: np.ndarray,
+    fs: float,
+    lowcut: float,
+    highcut: float,
+    window_size: int,
+    n_sigmas: float,
+    apply_smoothing: bool,
+) -> tuple[np.ndarray, float]:
     """Clean and bandpass-filter a signal for spectral analysis.
 
     Note: No PCHIP upsampling is applied here — unlike CWT, FFT-based
@@ -38,7 +48,9 @@ def _prepare_signal(raw_signal: np.ndarray, fs: float, lowcut: float, highcut: f
     return filtered, fs
 
 
-def compute_multitaper_psd(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float = None) -> tuple[np.ndarray, np.ndarray]:
+def compute_multitaper_psd(
+    signal: np.ndarray, fs: float, n_tapers: int | None = None, nw: float | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute power spectral density using Thomson's Multitaper method.
 
@@ -55,14 +67,16 @@ def compute_multitaper_psd(signal: np.ndarray, fs: float, n_tapers: int = None, 
         freqs: frequency array (Hz).
         psd: one-sided power spectral density.
     """
-    if n_tapers is None: n_tapers = cfg.MTM_N_TAPERS
-    if nw is None: nw = cfg.MTM_NW
-    
+    if n_tapers is None:
+        n_tapers = cfg.MTM_N_TAPERS
+    if nw is None:
+        nw = cfg.MTM_NW
+
     N = len(signal)
-    if N <= max(2 * nw, n_tapers):
+    if max(2 * nw, n_tapers) >= N:
         freqs = np.fft.rfftfreq(N, d=1.0 / fs) if N > 0 else np.array([0.0])
         return freqs, np.zeros_like(freqs)
-        
+
     sig = detrend(signal)
 
     tapers, eigenvalues = dpss(N, nw, n_tapers, return_ratios=True)
@@ -79,16 +93,23 @@ def compute_multitaper_psd(signal: np.ndarray, fs: float, n_tapers: int = None, 
 
     # Normalize to one-sided PSD
     psd *= 2.0 / (fs * N)
-    psd[0] /= 2.0                     # DC not doubled
+    psd[0] /= 2.0  # DC not doubled
     if N % 2 == 0:
-        psd[-1] /= 2.0                # Nyquist not doubled
+        psd[-1] /= 2.0  # Nyquist not doubled
 
     freqs = np.fft.rfftfreq(N, d=1.0 / fs)
     return freqs, psd
 
 
-def compute_ftest(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float = None,
-                  confidence: float = None, lowcut: float = None, highcut: float = None) -> tuple[np.ndarray, np.ndarray, float, float]:
+def compute_ftest(
+    signal: np.ndarray,
+    fs: float,
+    n_tapers: int | None = None,
+    nw: float | None = None,
+    confidence: float | None = None,
+    lowcut: float | None = None,
+    highcut: float | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, float | None]:
     """
     Thomson F-test for detecting deterministic harmonic components.
 
@@ -109,15 +130,18 @@ def compute_ftest(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float
         T0: dominant oscillation period (s), or None if no
             significant peak is found.
     """
-    if n_tapers is None: n_tapers = cfg.MTM_N_TAPERS
-    if nw is None: nw = cfg.MTM_NW
-    if confidence is None: confidence = cfg.FTEST_CONFIDENCE
+    if n_tapers is None:
+        n_tapers = cfg.MTM_N_TAPERS
+    if nw is None:
+        nw = cfg.MTM_NW
+    if confidence is None:
+        confidence = cfg.FTEST_CONFIDENCE
     N = len(signal)
-    
-    if N <= max(2 * nw, n_tapers):
+
+    if max(2 * nw, n_tapers) >= N:
         freqs = np.fft.rfftfreq(N, d=1.0 / fs) if N > 0 else np.array([0.0])
         return freqs, np.zeros_like(freqs), 1.0, None
-        
+
     sig = detrend(signal)
 
     tapers = dpss(N, nw, n_tapers)
@@ -128,11 +152,11 @@ def compute_ftest(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float
         Yk[k] = np.fft.rfft(sig * tapers[k])
 
     # DC response of each taper (zeroth Fourier coefficient)
-    Hk = np.sum(tapers, axis=1)           # (K,)
-    H2_sum = np.sum(Hk ** 2)              # scalar
+    Hk = np.sum(tapers, axis=1)  # (K,)
+    H2_sum = np.sum(Hk**2)  # scalar
 
     # Estimated deterministic line amplitude
-    mu_hat = np.sum(Hk[:, None] * Yk, axis=0) / H2_sum   # (nfreqs,)
+    mu_hat = np.sum(Hk[:, None] * Yk, axis=0) / H2_sum  # (nfreqs,)
 
     # Deterministic power
     det_power = np.abs(mu_hat) ** 2 * H2_sum
@@ -149,22 +173,17 @@ def compute_ftest(signal: np.ndarray, fs: float, n_tapers: int = None, nw: float
 
     # Find the dominant period T0 (highest F-stat peak above threshold)
     # Restrict search to the analysis band so leakage outside doesn't win
-    if lowcut is not None and highcut is not None:
-        band_mask = (freqs >= lowcut) & (freqs <= highcut)
-    else:
-        band_mask = freqs > 0
+    band_mask = (freqs >= lowcut) & (freqs <= highcut) if lowcut is not None and highcut is not None else freqs > 0
     f_stat_band = np.where(band_mask, f_stat, 0.0)
     dominant_idx = int(np.argmax(f_stat_band))
-    if band_mask[dominant_idx] and f_stat[dominant_idx] > threshold:
-        T0 = 1.0 / freqs[dominant_idx]
-    else:
-        T0 = None
+    T0 = 1.0 / freqs[dominant_idx] if band_mask[dominant_idx] and f_stat[dominant_idx] > threshold else None
 
     return freqs, f_stat, threshold, T0
 
 
-def compute_cross_spectrum(sig1: np.ndarray, sig2: np.ndarray, fs: float,
-                           n_tapers: int = None, nw: float = None) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def compute_cross_spectrum(
+    sig1: np.ndarray, sig2: np.ndarray, fs: float, n_tapers: int | None = None, nw: float | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Multitaper cross-spectral analysis between two signals.
 
@@ -184,15 +203,17 @@ def compute_cross_spectrum(sig1: np.ndarray, sig2: np.ndarray, fs: float,
         real_part: Re(S_xy)
         imag_part: Im(S_xy)
     """
-    if n_tapers is None: n_tapers = cfg.MTM_N_TAPERS
-    if nw is None: nw = cfg.MTM_NW
+    if n_tapers is None:
+        n_tapers = cfg.MTM_N_TAPERS
+    if nw is None:
+        nw = cfg.MTM_NW
     N = len(sig1)
-    
-    if N <= max(2 * nw, n_tapers):
+
+    if max(2 * nw, n_tapers) >= N:
         freqs = np.fft.rfftfreq(N, d=1.0 / fs) if N > 0 else np.array([0.0])
         z = np.zeros_like(freqs)
         return freqs, z, z, z, z, z
-        
+
     assert len(sig2) == N, "Signals must have the same length"
 
     s1 = detrend(sig1)
@@ -225,8 +246,9 @@ def compute_cross_spectrum(sig1: np.ndarray, sig2: np.ndarray, fs: float,
     return freqs, cross_power, phase, coherence, real_part, imag_part
 
 
-def find_spectral_peaks(power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, highcut_hz: float,
-                        n_peaks: int = None) -> np.ndarray:
+def find_spectral_peaks(
+    power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, highcut_hz: float, n_peaks: int | None = None
+) -> np.ndarray:
     """
     Find the *n_peaks* strongest spectral peaks within a frequency band.
 
@@ -239,7 +261,8 @@ def find_spectral_peaks(power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, 
     Returns:
         peak_indices: 1-D array of indices into *freqs* / *power*.
     """
-    if n_peaks is None: n_peaks = cfg.VELOCITY_N_PEAKS
+    if n_peaks is None:
+        n_peaks = cfg.VELOCITY_N_PEAKS
     band_mask = (freqs >= lowcut_hz) & (freqs <= highcut_hz)
 
     masked_power = np.zeros_like(power)
@@ -255,8 +278,9 @@ def find_spectral_peaks(power: np.ndarray, freqs: np.ndarray, lowcut_hz: float, 
     return peaks[sorted_idx[:n_peaks]]
 
 
-def estimate_velocities(cross_phase_deg: np.ndarray, freqs: np.ndarray, peak_indices: list[float],
-                        dx: float = None) -> list[dict]:
+def estimate_velocities(
+    cross_phase_deg: np.ndarray, freqs: np.ndarray, peak_indices: np.ndarray, dx: float | None = None
+) -> list[dict[str, Any]]:
     """
     Convert cross-spectral phase at peak frequencies to horizontal
     ionospheric drift velocities.
@@ -275,7 +299,8 @@ def estimate_velocities(cross_phase_deg: np.ndarray, freqs: np.ndarray, peak_ind
     Returns:
         list of dicts with keys: period, phase_deg, dt, velocity.
     """
-    if dx is None: dx = cfg.CROSS_SPECTRUM_DX
+    if dx is None:
+        dx = cfg.CROSS_SPECTRUM_DX
     results = []
     for idx in peak_indices:
         freq = freqs[idx]
@@ -288,17 +313,27 @@ def estimate_velocities(cross_phase_deg: np.ndarray, freqs: np.ndarray, peak_ind
 
         velocity = dx / abs(dt) if abs(dt) > 1e-6 else np.inf
 
-        results.append({
-            'period': period,
-            'phase_deg': phase_deg,
-            'dt': dt,
-            'velocity': velocity,
-        })
+        results.append(
+            {
+                "period": period,
+                "phase_deg": phase_deg,
+                "dt": dt,
+                "velocity": velocity,
+            }
+        )
     return results
 
 
-def run_spectral_pipeline(pm_signals: dict[str, np.ndarray], fs: float, lowcut: float, highcut: float,
-                          window_size: int, n_sigmas: float, apply_smoothing: bool, progress_callback: Optional[Callable[[int], None]] = None) -> dict:
+def run_spectral_pipeline(
+    pm_signals: dict[str, np.ndarray],
+    fs: float,
+    lowcut: float,
+    highcut: float,
+    window_size: int,
+    n_sigmas: float,
+    apply_smoothing: bool,
+    progress_callback: Callable[[int], None] | None = None,
+) -> dict[str, Any]:
     """
     Full spectral-correlation analysis pipeline for **one** frequency band.
 
@@ -318,79 +353,90 @@ def run_spectral_pipeline(pm_signals: dict[str, np.ndarray], fs: float, lowcut: 
     Returns:
         dict with keys: freqs, psd, ftest, cross, velocities, lowcut, highcut.
     """
-    if progress_callback: progress_callback(5)
-    
-    # 1. Preprocess all P-M channels
-    filtered = {}
-    new_fs = None
+    if progress_callback:
+        progress_callback(5)
+
+    filtered: dict[str, np.ndarray] = {}
+    new_fs: float = fs
     for ch_name, raw in pm_signals.items():
         sig, nfs = _prepare_signal(
-            raw, fs, lowcut, highcut,
-            window_size, n_sigmas, apply_smoothing,
+            raw,
+            fs,
+            lowcut,
+            highcut,
+            window_size,
+            n_sigmas,
+            apply_smoothing,
         )
         filtered[ch_name] = sig
         new_fs = nfs
-        
-    if progress_callback: progress_callback(25)
+
+    if progress_callback:
+        progress_callback(25)
 
     # 2. Multitaper PSD for each channel
-    psd_results = {}
-    freqs = None
+    psd_results: dict[str, np.ndarray] = {}
+    freqs: np.ndarray = np.array([], dtype=np.float64)
     for ch_name, sig in filtered.items():
         f, psd = compute_multitaper_psd(sig, new_fs)
         psd_results[ch_name] = psd
         freqs = f
 
-    if progress_callback: progress_callback(45)
+    if progress_callback:
+        progress_callback(45)
 
     # 3. F-test for each channel
-    ftest_results = {}
+    ftest_results: dict[str, Any] = {}
     threshold = None
     for ch_name, sig in filtered.items():
-        _, fstat, thresh, T0 = compute_ftest(sig, new_fs,
-                                              lowcut=lowcut, highcut=highcut)
+        _, fstat, thresh, T0 = compute_ftest(sig, new_fs, lowcut=lowcut, highcut=highcut)
         ftest_results[ch_name] = fstat
-        ftest_results[ch_name + '_T0'] = T0
+        ftest_results[ch_name + "_T0"] = T0
         threshold = thresh
-    ftest_results['threshold'] = threshold
-    ftest_results['confidence'] = cfg.FTEST_CONFIDENCE
+    ftest_results["threshold"] = threshold
+    ftest_results["confidence"] = cfg.FTEST_CONFIDENCE
 
-    if progress_callback: progress_callback(75)
+    if progress_callback:
+        progress_callback(75)
 
     # 4. Cross-spectra (20 MHz vs 25 MHz per polarisation)
     cross_results = {}
     cross_pairs = {
-        'Pol A': ('20 MHz Pol A', '25 MHz Pol A'),
-        'Pol B': ('20 MHz Pol B', '25 MHz Pol B'),
+        "Pol A": ("20 MHz Pol A", "25 MHz Pol A"),
+        "Pol B": ("20 MHz Pol B", "25 MHz Pol B"),
     }
     for pol_name, (ch20, ch25) in cross_pairs.items():
         _, power, phase, coh, real_p, imag_p = compute_cross_spectrum(
-            filtered[ch20], filtered[ch25], new_fs,
+            filtered[ch20],
+            filtered[ch25],
+            new_fs,
         )
-        cross_results[pol_name] = {
-            'power': power, 'phase': phase, 'coherence': coh,
-            'real': real_p, 'imag': imag_p
-        }
+        cross_results[pol_name] = {"power": power, "phase": phase, "coherence": coh, "real": real_p, "imag": imag_p}
 
-    if progress_callback: progress_callback(90)
+    if progress_callback:
+        progress_callback(90)
 
     # 5. Peak detection + velocity estimation
     vel_results = {}
     for pol_name, cross_data in cross_results.items():
         peaks = find_spectral_peaks(
-            cross_data['power'], freqs, lowcut, highcut,
+            cross_data["power"],
+            freqs,
+            lowcut,
+            highcut,
         )
-        velocities = estimate_velocities(cross_data['phase'], freqs, peaks)
+        velocities = estimate_velocities(cross_data["phase"], freqs, peaks)
         vel_results[pol_name] = velocities
 
-    if progress_callback: progress_callback(100)
-    
+    if progress_callback:
+        progress_callback(100)
+
     return {
-        'freqs': freqs,
-        'psd': psd_results,
-        'ftest': ftest_results,
-        'cross': cross_results,
-        'velocities': vel_results,
-        'lowcut': lowcut,
-        'highcut': highcut,
+        "freqs": freqs,
+        "psd": psd_results,
+        "ftest": ftest_results,
+        "cross": cross_results,
+        "velocities": vel_results,
+        "lowcut": lowcut,
+        "highcut": highcut,
     }

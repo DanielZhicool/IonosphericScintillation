@@ -1,15 +1,18 @@
 import traceback
+
 from PySide6.QtCore import QThread, Signal
+
 
 class SpectralAnalysisWorker(QThread):
     """
     Worker for running the full spectral-correlation analysis pipeline in a background thread.
-    
+
     Emits:
         progress (int): Pipeline progress percentage (0-100).
         finished (dict): Completed spectral analysis results.
         error (str): Formatted traceback string on failure.
     """
+
     progress = Signal(int)
     finished = Signal(dict)
     error = Signal(str)
@@ -27,16 +30,17 @@ class SpectralAnalysisWorker(QThread):
     def run(self):
         try:
             from core.spectral_analysis import run_spectral_pipeline
+
             band_results = {}
             for i, (band_key, lowcut, highcut) in enumerate(self.bands):
                 min_period = 1.0 / lowcut
                 if self.signal_duration < min_period:
                     band_results[band_key] = None
                     continue
-                
-                def prog_cb(val):
-                    self.progress.emit((i * 100 + val) // len(self.bands))
-                    
+
+                def prog_cb(val, current_i=i):
+                    self.progress.emit((current_i * 100 + val) // len(self.bands))
+
                 res = run_spectral_pipeline(
                     self.pm_signals,
                     self.fs,
@@ -45,10 +49,10 @@ class SpectralAnalysisWorker(QThread):
                     self.window_size,
                     self.n_sigmas,
                     self.apply_smoothing,
-                    progress_callback=prog_cb
+                    progress_callback=prog_cb,
                 )
                 band_results[band_key] = res
-                
+
             self.progress.emit(100)
             self.finished.emit(band_results)
         except Exception:
@@ -64,6 +68,7 @@ class SignalAnalysisWorker(QThread):
         finished (tuple): Returns (filtered_sig, img_data).
         error (str): Formatted traceback string on failure.
     """
+
     progress = Signal(int)
     finished = Signal(tuple)
     error = Signal(str)
@@ -81,6 +86,7 @@ class SignalAnalysisWorker(QThread):
     def run(self):
         try:
             from core.signal_processing import process_signal_pipeline
+
             filtered_sig, img_data = process_signal_pipeline(
                 self.raw_signal,
                 self.fs,
@@ -89,7 +95,7 @@ class SignalAnalysisWorker(QThread):
                 self.window_size,
                 self.n_sigmas,
                 self.apply_smoothing,
-                progress_callback=self.progress.emit
+                progress_callback=self.progress.emit,
             )
             self.finished.emit((filtered_sig, img_data))
         except Exception:

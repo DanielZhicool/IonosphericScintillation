@@ -22,7 +22,9 @@ FILTER_TEXT_FILES = "Text Files (*.txt);;All Files (*)"
 MSG_NO_LOG_EVENTS_TITLE = "Empty log file"
 MSG_NO_LOG_EVENTS_TEXT = "No events could be found in the regi log."
 MSG_ANALYSIS_DATA_TOO_SHORT_TITLE = "Insufficient data"
-MSG_ANALYSIS_DATA_TOO_SHORT_TEXT = "The signal length is too short for the Large clouds band. Use Small bubbles for shorter observations."
+MSG_ANALYSIS_DATA_TOO_SHORT_TEXT = (
+    "The signal length is too short for the Large clouds band. Use Small bubbles for shorter observations."
+)
 MSG_LOG_PROCESSING_RESULT_TITLE = "Result"
 MSG_LOG_PROCESSING_ERROR_TITLE = "Processing error"
 MSG_OPEN_ERROR_TITLE = "Open error"
@@ -54,9 +56,16 @@ MSG_SPECTRAL_ERROR_TITLE = "Spectral Analysis Error"
 
 
 CHANNELS = [
-    'P1_20A', 'M1_20A', 'P2_20B', 'M2_20B', 
-    'P3_25A', 'M3_25A', 'P4_25B', 'M4_25B', 
-    '20 MHz Pol A (P-M)', '20 MHz Pol B (P-M)', 
-    '25 MHz Pol A (P-M)', '25 MHz Pol B (P-M)'
+    "P1_20A",
+    "M1_20A",
+    "P2_20B",
+    "M2_20B",
+    "P3_25A",
+    "M3_25A",
+    "P4_25B",
+    "M4_25B",
+    "20 MHz Pol A (P-M)",
+    "20 MHz Pol B (P-M)",
+    "25 MHz Pol A (P-M)",
+    "25 MHz Pol B (P-M)",
 ]
-

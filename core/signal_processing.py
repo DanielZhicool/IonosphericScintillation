@@ -1,5 +1,5 @@
 import warnings
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,13 @@ from scipy.signal.windows import tukey
 import core.config as cfg
 
 
-def clean_and_smooth_signal(signal: np.ndarray, window_size: int = None, n_sigmas: float = None, apply_smoothing: bool = True, polyorder: int = None) -> np.ndarray:
+def clean_and_smooth_signal(
+    signal: np.ndarray,
+    window_size: int | None = None,
+    n_sigmas: float | None = None,
+    apply_smoothing: bool = True,
+    polyorder: int | None = None,
+) -> np.ndarray:
     """
     Clean a radio-astronomy signal by removing spikes/clusters and applying smoothing.
 
@@ -25,24 +31,27 @@ def clean_and_smooth_signal(signal: np.ndarray, window_size: int = None, n_sigma
     Returns:
         1D numpy array of the cleaned and smoothed signal.
     """
-    if window_size is None: window_size = cfg.DEFAULT_WINDOW_SIZE
-    if n_sigmas is None: n_sigmas = cfg.DEFAULT_N_SIGMAS
-    if polyorder is None: polyorder = cfg.SAVGOL_POLYORDER
+    if window_size is None:
+        window_size = cfg.DEFAULT_WINDOW_SIZE
+    if n_sigmas is None:
+        n_sigmas = cfg.DEFAULT_N_SIGMAS
+    if polyorder is None:
+        polyorder = cfg.SAVGOL_POLYORDER
     s = pd.Series(signal)
-    
+
     # Step 1: Outlier detection (Hampel-like)
     # min_periods=1 ensures edge samples are still tested (otherwise the rolling
     # window is NaN at both ends, silently missing outliers there).
     rolling_median = s.rolling(window=window_size, center=True, min_periods=1).median()
     rolling_mad = 1.4826 * (s - rolling_median).abs().rolling(window=window_size, center=True, min_periods=1).median()
     outliers = (s - rolling_median).abs() > (n_sigmas * rolling_mad)
-    
+
     cleaned_s = s.copy()
     cleaned_s[outliers] = rolling_median[outliers]
-    
+
     cleaned_s = cleaned_s.bfill().ffill()
     cleaned_signal = cleaned_s.values
-    
+
     # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
         smooth_window = window_size if window_size % 2 != 0 else window_size + 1
@@ -57,7 +66,7 @@ def fill_gap_with_red_noise(
     start_idx: int,
     end_idx: int,
     context_window: int = 200,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Replaces a segment of the signal with generated red noise.
@@ -160,22 +169,18 @@ def fill_gap_with_red_noise(
         # Left fade: smoothly force red_noise[0] -> left_val over blend_len samples
         t_left = np.linspace(0.0, 1.0, blend_len)
         left_weight = 0.5 * (1.0 + np.cos(np.pi * t_left))  # 1 -> 0
-        red_noise[:blend_len] = (
-            left_weight * left_val + (1.0 - left_weight) * red_noise[:blend_len]
-        )
+        red_noise[:blend_len] = left_weight * left_val + (1.0 - left_weight) * red_noise[:blend_len]
 
         # Right fade: smoothly force red_noise[-1] -> right_val
         t_right = np.linspace(0.0, 1.0, blend_len)
         right_weight = 0.5 * (1.0 + np.cos(np.pi * t_right[::-1]))  # 0 -> 1
-        red_noise[-blend_len:] = (
-            right_weight * right_val + (1.0 - right_weight) * red_noise[-blend_len:]
-        )
+        red_noise[-blend_len:] = right_weight * right_val + (1.0 - right_weight) * red_noise[-blend_len:]
 
     signal_cleaned[start_idx:end_idx] = red_noise
     return signal_cleaned
 
 
-def upsample_pchip(signal: np.ndarray, fs: float, factor: int = None) -> tuple[np.ndarray, float]:
+def upsample_pchip(signal: np.ndarray, fs: float, factor: int | None = None) -> tuple[np.ndarray, float]:
     """
     Upsamples a signal using PCHIP interpolation.
 
@@ -193,13 +198,13 @@ def upsample_pchip(signal: np.ndarray, fs: float, factor: int = None) -> tuple[n
         factor = cfg.PCHIP_FACTOR
     N = len(signal)
     t = np.arange(N) / fs
-    
+
     new_N = N * factor
     t_new = np.linspace(t[0], t[-1], new_N)
 
     new_signal = pchip_interpolate(t, signal, t_new)
     new_fs = fs * factor
-    
+
     return new_signal, new_fs
 
 
@@ -218,7 +223,7 @@ def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, 
         1D numpy array of the filtered signal.
     """
     # Remove linear trend (baseline drift); this also removes the DC offset.
-    data_detrended = detrend(data, type='linear')
+    data_detrended = detrend(data, type="linear")
 
     # 2. Smoothly taper 5% at the edges to zero to avoid filter shock
     window = tukey(len(data_detrended), alpha=0.05)
@@ -228,7 +233,7 @@ def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, 
     low = lowcut / nyq
     high = highcut / nyq
 
-    sos = butter(order, [low, high], btype='band', output='sos')
+    sos = butter(order, [low, high], btype="band", output="sos")
     return sosfiltfilt(sos, data_ready)
 
 
@@ -237,9 +242,9 @@ def compute_cwt_spectrogram(
     fs: float,
     lowcut: float,
     highcut: float,
-    nv: int = None,
+    nv: int | None = None,
     use_ssq: bool = True,
-    cancel_check: Optional[Callable[[], bool]] = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> np.ndarray:
     """
     Computes a Continuous Wavelet Transform (CWT) spectrogram based on the Morse wavelet.
@@ -261,13 +266,15 @@ def compute_cwt_spectrogram(
         2D numpy array representing the spectrogram image in (time, frequency) orientation.
     """
     # Deferred: ssqueezepy is heavy and only needed for CWT computation
-    from ssqueezepy import ssq_cwt, cwt, Wavelet
+    import gc
+
+    from ssqueezepy import Wavelet, cwt, ssq_cwt
     from ssqueezepy.utils import make_scales
     from ssqueezepy.wavelets import center_frequency
 
     if nv is None:
-        nv = cfg.CWT_NV_BUBBLES if lowcut >= 1.0/150.0 - 1e-6 else cfg.CWT_NV_CLOUDS
-        
+        nv = cfg.CWT_NV_BUBBLES if lowcut >= 1.0 / 150.0 - 1e-6 else cfg.CWT_NV_CLOUDS
+
     N = len(signal)
     if N == 0:
         return np.zeros((1, 1))
@@ -277,17 +284,16 @@ def compute_cwt_spectrogram(
     processing_signal = signal * window
 
     # Setup Morse wavelet core with parameters from config
-    morse_wavelet = Wavelet(('gmw', {'gamma': cfg.MORSE_GAMMA, 'beta': cfg.MORSE_BETA}))
-
+    morse_wavelet = Wavelet(("gmw", {"gamma": cfg.MORSE_GAMMA, "beta": cfg.MORSE_BETA}))
 
     chunk_size = 32768
     overlap = 16384  # Heavily increased overlap to completely eliminate CWT boundary artifacts
-    
-    # Aggressive UI compression to prevent memory errors. 
+
+    # Aggressive UI compression to prevent memory errors.
     # Downsample time axis to max ~8000 pixels (plenty for any monitor).
     pool_size = max(1, N // 8000)
 
-    def process_chunk(chunk_mag):
+    def process_chunk(chunk_mag: np.ndarray) -> np.ndarray:
         """Applies blur, contrast mapping, and pooling to a single chunk."""
         # Local 2D Gaussian blur (boundary effects are tiny compared to overlap)
         chunk_mag = gaussian_filter(chunk_mag, sigma=(cfg.GAUSSIAN_SIGMA_FREQ, cfg.GAUSSIAN_SIGMA_TIME))
@@ -297,24 +303,19 @@ def compute_cwt_spectrogram(
             # Log contrast
             return 20 * np.log10(np.maximum(chunk_mag, 1e-12))
 
-    if N <= chunk_size:
+    if chunk_size >= N:
         # Run on full signal
         if use_ssq:
             # ssq_cwt always computes both the plain CWT (Wx) and the
             # synchrosqueezed transform (Tw).  We only use Tw for the
             # sharpened time-frequency image; Wx is intentionally discarded.
-            Tw, Wx, freqs, _ = ssq_cwt(
-                processing_signal,
-                wavelet=morse_wavelet,
-                nv=nv,
-                fs=fs
-            )
+            Tw, Wx, freqs, _ = ssq_cwt(processing_signal, wavelet=morse_wavelet, nv=nv, fs=fs)
             Wx_abs = np.abs(Tw)
+            del Tw, Wx
+            gc.collect()
+
             valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
-            if len(valid_idx) > 0:
-                Wx_abs = Wx_abs[valid_idx, :]
-            else:
-                Wx_abs = np.zeros((1, N))
+            Wx_abs = Wx_abs[valid_idx, :] if len(valid_idx) > 0 else np.zeros((1, N))
         else:
             scales = make_scales(N, wavelet=morse_wavelet, nv=nv)
             fc = center_frequency(morse_wavelet)
@@ -324,15 +325,15 @@ def compute_cwt_spectrogram(
                 Wx_abs = np.zeros((1, N))
             else:
                 scales = scales[valid_idx].astype(np.float64)
-                Wx, _scales = cwt(
-                    processing_signal,
-                    wavelet=morse_wavelet,
-                    scales=scales,
-                    fs=fs
-                )
+                Wx, _scales = cwt(processing_signal, wavelet=morse_wavelet, scales=scales, fs=fs)
                 Wx_abs = np.abs(Wx)
-            
+                del Wx
+                gc.collect()
+
         Wx_db = process_chunk(Wx_abs)
+        del Wx_abs
+        gc.collect()
+
         if pool_size > 1:
             pad_len = (pool_size - (Wx_db.shape[1] % pool_size)) % pool_size
             if pad_len > 0:
@@ -344,91 +345,85 @@ def compute_cwt_spectrogram(
         Wx_db_chunks = []
         step = chunk_size - overlap
         num_chunks = int(np.ceil((N - overlap) / step))
-        
+
         valid_idx = None
         scales = None
-        
+
         unpooled_buffer = None
-        
+
         for i in range(num_chunks):
             if cancel_check and cancel_check():
                 raise RuntimeError("Cancelled")
             start = i * step
             end = start + chunk_size
-            
+
             chunk = processing_signal[start:end]
             actual_chunk_len = len(chunk)
-            
+
             if actual_chunk_len < chunk_size:
                 padded_chunk = np.zeros(chunk_size)
                 padded_chunk[:actual_chunk_len] = chunk
                 chunk = padded_chunk
-            
+
             if use_ssq:
                 # Wx (plain CWT) is discarded; only the synchrosqueezed Tw is used.
-                Tw, _, freqs, _ = ssq_cwt(
-                    chunk,
-                    wavelet=morse_wavelet,
-                    nv=nv,
-                    fs=fs
-                )
+                Tw, Wx, freqs, _ = ssq_cwt(chunk, wavelet=morse_wavelet, nv=nv, fs=fs)
                 Tw_abs = np.abs(Tw)
-                
+                del Tw, Wx
+                gc.collect()
+
                 if valid_idx is None:
                     valid_idx = np.where((freqs >= lowcut) & (freqs <= highcut))[0]
-                
-                if len(valid_idx) == 0:
-                    chunk_mag = np.zeros((1, chunk_size))
-                else:
-                    chunk_mag = Tw_abs[valid_idx, :]
+
+                chunk_mag = np.zeros((1, chunk_size)) if len(valid_idx) == 0 else Tw_abs[valid_idx, :]
+                del Tw_abs
             else:
                 if scales is None:
                     scales_all = make_scales(chunk_size, wavelet=morse_wavelet, nv=nv)
                     fc = center_frequency(morse_wavelet)
                     freqs = fc / scales_all * fs
                     valid_idx = (freqs >= lowcut) & (freqs <= highcut)
-                    
-                    if np.any(valid_idx):
-                        scales = scales_all[valid_idx].astype(np.float64)
-                    else:
-                        scales = np.array([])
-                
+
+                    scales = scales_all[valid_idx].astype(np.float64) if np.any(valid_idx) else np.array([])
+
                 if len(scales) == 0:
                     chunk_mag = np.zeros((1, chunk_size))
                 else:
-                    Wx, _scales = cwt(
-                        chunk,
-                        wavelet=morse_wavelet,
-                        scales=scales,
-                        fs=fs
-                    )
+                    Wx, _scales = cwt(chunk, wavelet=morse_wavelet, scales=scales, fs=fs)
                     chunk_mag = np.abs(Wx)
-            
+                    del Wx
+                    gc.collect()
+
             # Process fully inside chunk!
             chunk_db = process_chunk(chunk_mag)
-            
+            del chunk_mag
+
             keep_start = 0 if i == 0 else overlap // 2
             keep_end = actual_chunk_len if i == num_chunks - 1 else chunk_size - overlap // 2
-            
+
             sliced_chunk = chunk_db[:, keep_start:keep_end]
-            
+            del chunk_db
+
             if pool_size > 1:
                 if unpooled_buffer is not None:
                     sliced_chunk = np.concatenate([unpooled_buffer, sliced_chunk], axis=1)
-                
+
                 n_cols = sliced_chunk.shape[1]
                 n_poolable = (n_cols // pool_size) * pool_size
-                
+
                 if n_poolable > 0:
                     poolable_db = sliced_chunk[:, :n_poolable]
                     unpooled_buffer = sliced_chunk[:, n_poolable:]
                     pooled = poolable_db.reshape(poolable_db.shape[0], -1, pool_size).max(axis=2)
                     Wx_db_chunks.append(pooled)
+                    del poolable_db, pooled
                 else:
                     unpooled_buffer = sliced_chunk
+                del sliced_chunk
             else:
                 Wx_db_chunks.append(sliced_chunk)
-                
+            gc.collect()
+
         # Flush the final unpooled buffer seamlessly
         if pool_size > 1 and unpooled_buffer is not None and unpooled_buffer.shape[1] > 0:
             pad_len = pool_size - unpooled_buffer.shape[1]
@@ -436,8 +431,12 @@ def compute_cwt_spectrogram(
             padded_buffer = np.pad(unpooled_buffer, ((0, 0), (0, pad_len)), constant_values=pad_val)
             pooled = padded_buffer.reshape(padded_buffer.shape[0], -1, pool_size).max(axis=2)
             Wx_db_chunks.append(pooled)
-            
+            del unpooled_buffer, padded_buffer, pooled
+            gc.collect()
+
         Wx_db = np.concatenate(Wx_db_chunks, axis=1)
+        del Wx_db_chunks
+        gc.collect()
 
     if cfg.CWT_SHOW_LINEAR_AMP:
         # Return transposed (time, frequency) directly
@@ -446,17 +445,12 @@ def compute_cwt_spectrogram(
         # Dynamic Range Clipping in dB
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
-            if np.all(np.isnan(Wx_db)):
-                max_db = 0.0
-            else:
-                if use_ssq:
-                    # nanpercentile is extremely fast now since Wx_db is highly compressed
-                    max_db = np.nanpercentile(Wx_db, 99.9)
-                else:
-                    max_db = np.nanmax(Wx_db)
-            
+            max_db = (
+                0.0 if np.all(np.isnan(Wx_db)) else (np.nanpercentile(Wx_db, 99.9) if use_ssq else np.nanmax(Wx_db))
+            )
+
         Wx_contrast = np.clip(Wx_db, a_min=max_db - cfg.CWT_DYNAMIC_RANGE_DB, a_max=max_db)
-        
+
         # Return transposed (time, frequency) for pyqtgraph
         return Wx_contrast.T
 
@@ -466,17 +460,17 @@ def process_signal_pipeline(
     fs: float,
     lowcut: float,
     highcut: float,
-    window_size: int = None,
-    n_sigmas: float = None,
+    window_size: int | None = None,
+    n_sigmas: float | None = None,
     apply_smoothing: bool = True,
-    progress_callback: Optional[Callable[[int], None]] = None,
-    cancel_check: Optional[Callable[[], bool]] = None,
-    nv: int = None,
+    progress_callback: Callable[[int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    nv: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Full processing pipeline for the interactive UI.
 
-    Performs spike removal, Savitzky-Golay smoothing, PCHIP upsampling, bandpass filtering, 
+    Performs spike removal, Savitzky-Golay smoothing, PCHIP upsampling, bandpass filtering,
     and CWT spectrogram computation with max pooling for UI performance.
 
     Args:
@@ -494,8 +488,9 @@ def process_signal_pipeline(
     Returns:
         A tuple of (downsampled_filtered_signal, spectrogram_image_data).
     """
-    if progress_callback: progress_callback(5)
-    
+    if progress_callback:
+        progress_callback(5)
+
     # 1. Remove spikes (Hampel + Savitzky-Golay)
     cleaned_sig = clean_and_smooth_signal(
         raw_signal,
@@ -503,43 +498,61 @@ def process_signal_pipeline(
         n_sigmas=n_sigmas,
         apply_smoothing=apply_smoothing,
     )
-    if progress_callback: progress_callback(20)
-    
+    if progress_callback:
+        progress_callback(20)
+
     # Performance shortcut for very long signals (e.g. Global View).
     # PCHIP upsampling is skipped above cfg.PCHIP_LONG_SIGNAL_THRESHOLD because
     # it is memory-intensive and the bandpass filter's effective resolution
     # degrades only modestly at the original fs for long observations.
     N_orig = len(raw_signal)
     actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= cfg.PCHIP_LONG_SIGNAL_THRESHOLD else 1
-    
+
     should_use_ssq = True
-    actual_nv = nv if nv is not None else (cfg.CWT_NV_BUBBLES if lowcut >= 1.0/150.0 - 1e-6 else cfg.CWT_NV_CLOUDS)
-    
+    actual_nv = nv if nv is not None else (cfg.CWT_NV_BUBBLES if lowcut >= 1.0 / 150.0 - 1e-6 else cfg.CWT_NV_CLOUDS)
+
     if cancel_check and cancel_check():
         raise RuntimeError("Cancelled")
 
     # 2. PCHIP Upsampling (skipped if actual_pchip_factor == 1)
     if actual_pchip_factor > 1:
         upsampled_sig, new_fs = upsample_pchip(cleaned_sig, fs, factor=actual_pchip_factor)
+        del cleaned_sig
+        import gc
+
+        gc.collect()
     else:
         upsampled_sig, new_fs = cleaned_sig, fs
-        
-    if progress_callback: progress_callback(30)
+
+    if progress_callback:
+        progress_callback(30)
     if cancel_check and cancel_check():
         raise RuntimeError("Cancelled")
-    
+
     # 3. Bandpass filtering at HIGH frequency (new_fs)
     filtered_sig = bandpass_filter(upsampled_sig, lowcut, highcut, new_fs)
-    
+    del upsampled_sig
+    import gc
+
+    gc.collect()
+
     # Downsample back for 1D plot so time axis in UI doesn't stretch
     filtered_sig_downsampled = filtered_sig[::actual_pchip_factor]
-    if progress_callback: progress_callback(40)
+    if progress_callback:
+        progress_callback(40)
     if cancel_check and cancel_check():
         raise RuntimeError("Cancelled")
-    
+
     # 4. Compute CWT at HIGH frequency (perfect phase detail)
-    img_data = compute_cwt_spectrogram(filtered_sig, new_fs, lowcut, highcut, nv=actual_nv, use_ssq=should_use_ssq, cancel_check=cancel_check)
-    if progress_callback: progress_callback(100)
-    
+    img_data = compute_cwt_spectrogram(
+        filtered_sig, new_fs, lowcut, highcut, nv=actual_nv, use_ssq=should_use_ssq, cancel_check=cancel_check
+    )
+    del filtered_sig
+    import gc
+
+    gc.collect()
+    if progress_callback:
+        progress_callback(100)
+
     # Return directly, img_data is already optimally pooled internally!
     return filtered_sig_downsampled, img_data

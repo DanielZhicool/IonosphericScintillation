@@ -33,6 +33,120 @@ This suite integrates a range of digital signal processing (DSP) and statistical
 
 ---
 
+## Data Processing Pipeline
+
+The following diagram summarizes the complete processing workflow, from raw URAN-4 observations to time-frequency analysis, spectral estimation, ionospheric drift velocity calculation, and result export.
+
+```mermaid
+flowchart TD
+
+%% ---------- Styles ----------
+classDef input fill:#2e3440,stroke:#88c0d0,color:#eceff4
+classDef prep fill:#434c5e,stroke:#81a1c1,color:#eceff4
+classDef wave fill:#3b4252,stroke:#a3be8c,color:#eceff4
+classDef spec fill:#4c566a,stroke:#ebcb8b,color:#eceff4
+classDef out fill:#5e81ac,stroke:#88c0d0,color:#eceff4
+
+%% ---------- Inputs ----------
+PM6["PM6 Binary Data\n20 MHz & 25 MHz"]:::input
+REGI["REGI Observation Log"]:::input
+
+%% ---------- Preparation ----------
+subgraph PREP["1. Session Preparation & Signal Cleaning"]
+    Parser["PM6 Parser"]
+    Split["Session Splitting"]
+    Gaps["Calibration Gap Detection"]
+    Fill["AR(1) Red Noise\nGap Filling"]
+    Hampel["Hampel Filter"]
+    SG["Savitzky-Golay Filter"]
+
+    Parser --> Split
+    Split --> Gaps
+    Gaps --> Fill
+    Fill --> Hampel
+    Hampel --> SG
+end
+
+%% ---------- Wavelet ----------
+subgraph WAVE["2A. Wavelet Analysis"]
+    PCHIP["PCHIP Upsampling (3x)"]
+    Tukey1["Tukey Window"]
+    BP1["Butterworth Bandpass"]
+    CWT["Continuous Wavelet Transform"]
+    SST["Synchrosqueezing Transform"]
+
+    PCHIP --> Tukey1
+    Tukey1 --> BP1
+    BP1 --> CWT
+    CWT --> SST
+end
+
+%% ---------- Spectral ----------
+subgraph SPEC["2B. Multitaper Spectral Analysis"]
+    Tukey2["Tukey Window"]
+    BP2["Butterworth Bandpass"]
+    PSD["Multitaper PSD"]
+    FTest["Thomson F-Test"]
+    Cross["Cross Spectrum"]
+    IDVE["Drift Velocity Estimation"]
+
+    Tukey2 --> BP2
+    BP2 --> PSD
+    BP2 --> Cross
+    PSD --> FTest
+    Cross --> IDVE
+end
+
+%% ---------- Outputs ----------
+Export["Plots & Batch Export\nPNG / TXT"]:::out
+
+%% ---------- Connections ----------
+PM6 --> Parser
+REGI --> Split
+
+SG --> PCHIP
+SG --> Tukey2
+
+SST --> Export
+PSD --> Export
+FTest --> Export
+IDVE --> Export
+
+%% ---------- Classes ----------
+class Parser,Split,Gaps,Fill,Hampel,SG prep
+class PCHIP,Tukey1,BP1,CWT,SST wave
+class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
+```
+
+---
+
+## Repository Structure
+
+```text
+├── core/                      # Core scientific algorithms and signal processing logic
+│   ├── config.py             # Default configuration and hyperparameters
+│   ├── parsers.py            # Parsers for raw binary PM6 data and REGI log files
+│   ├── signal_processing.py  # DSP filters (Hampel, Savitzky-Golay, red noise interpolation)
+│   └── spectral_analysis.py  # Thomson multitaper PSD, F-test, cross-spectral analysis & IDVE
+├── gui/                      # Graphical User Interface built with PyQt/PySide
+│   ├── batch_export_dialog.py # Dialog for batch analysis and multi-format export
+│   ├── constants.py          # Color palettes, styling constants, and default UI parameters
+│   ├── main_window.py        # Main layout, interactive plotting, and tab coordination
+│   ├── plotting.py           # Custom Matplotlib canvases and navigation toolbars
+│   ├── settings_tab.py       # Settings dialog for tweaking CWT and spectral parameters
+│   ├── spectral_tab.py       # Tab container for PSD, F-Test, and Cross-Spectrum results
+│   ├── tabs.py               # Tab management for daily sessions and astronomical sources
+│   └── workers.py            # Multithreaded Qt workers for non-blocking computations
+├── images/                   # Screenshots and diagrams for documentation
+├── app.py                    # Application entry point
+├── example.ipynb             # Jupyter Notebook with API usage examples and algorithms
+├── pyproject.toml            # Python project configuration and dependency specifications
+├── Uran4Scintillation.spec   # PyInstaller spec file for packaging the application
+└── README.md                 # Project documentation and guide
+```
+
+---
+
 ## Installation
 
 1.  Install [uv](https://github.com/astral-sh/uv), the fast Python package manager (e.g., `pip install uv` or via your system's package manager).
@@ -76,6 +190,7 @@ After loading the REGI log, the dataset is automatically split by observation da
 <div align="center">
 <img src="images/signal_processing.png" alt="Signal Processing" width="50%">
 </div>
+
 *   Adjust the **Filter window size (samples):** and **Outlier threshold (sigma):** spinboxes for the Hampel filter to aggressively or softly clean outliers.
 *   Toggle **Enable smoothing** to smooth the signal using the Savitzky-Golay algorithm.
 *   Select the desired **Bandpass range:** (e.g., _Small bubbles (5 - 150 s)_ or _Large clouds (150 - 600 s)_). Changing this selection automatically triggers the bandpass filter and recalculates the CWT spectrogram. You can also manually trigger a recalculation by clicking **"4. Refresh spectrogram"**.
@@ -196,8 +311,8 @@ These parameters define the default values for the processing pipeline and can b
 | --- | --- | --- |
 | `PCHIP_FACTOR` | `3` | PCHIP upsampling multiplier |
 | `PCHIP_LONG_SIGNAL_THRESHOLD` | `30000` | Sample count above which PCHIP upsampling is skipped to save memory |
-| `CWT_NV_BUBBLES` | `64` | Voices per octave for the bubbles band (5–150 s) |
-| `CWT_NV_CLOUDS` | `128` | Voices per octave for the clouds band (150–600 s) |
+| `CWT_NV_BUBBLES` | `32` | Voices per octave for the bubbles band (5–150 s) |
+| `CWT_NV_CLOUDS` | `64` | Voices per octave for the clouds band (150–600 s) |
 | `MORSE_GAMMA` | `3` | Generalized Morse Wavelet symmetry parameter |
 | `MORSE_BETA` | `30` | Generalized Morse Wavelet time-bandwidth parameter |
 | `GAUSSIAN_SIGMA_FREQ` | `1.0` | Gaussian blur sigma along the frequency axis |

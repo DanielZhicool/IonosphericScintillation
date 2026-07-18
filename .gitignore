@@ -5,9 +5,27 @@ build/
 dist/
 wheels/
 *.egg-info
+.python-version
 
 # Virtual environments
-.venv
+.venv/
+venv/
+env/
+ENV/
+
+# Testing and Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Editor / IDE configuration
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Data
 data/
