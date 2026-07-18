@@ -156,9 +156,7 @@ def test_velocity_estimation_scientific_validation() -> None:
     sig20_pos = np.sin(2 * np.pi * f_target * t)
     sig25_pos = np.sin(2 * np.pi * f_target * (t - dt_true_pos))
 
-    freqs, power, phase, coherence, real, imag = compute_cross_spectrum(
-        sig20_pos, sig25_pos, fs, n_tapers=7, nw=4.0
-    )
+    freqs, power, phase, coherence, real, imag = compute_cross_spectrum(sig20_pos, sig25_pos, fs, n_tapers=7, nw=4.0)
     peaks_pos = find_spectral_peaks(power, freqs, 0.01, 0.1, n_peaks=1)
 
     assert len(peaks_pos) > 0
