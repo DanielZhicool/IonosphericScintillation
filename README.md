@@ -126,8 +126,13 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 ├── core/                      # Core scientific algorithms and signal processing logic
 │   ├── config.py             # Default configuration and hyperparameters
 │   ├── parsers.py            # Parsers for raw binary PM6 data and REGI log files
-│   ├── signal_processing.py  # DSP filters (Hampel, Savitzky-Golay, red noise interpolation)
-│   └── spectral_analysis.py  # Thomson multitaper PSD, F-test, cross-spectral analysis & IDVE
+│   ├── signal_processing.py  # DSP filters (Hampel, Savitzky-Golay, red noise interpolation, CWT/SST)
+│   ├── spectral_analysis.py  # Thomson multitaper PSD, F-test, cross-spectral analysis & IDVE
+│   └── synthetic_generator.py # Synthetic scintillation signal and noise generator
+├── docs/                      # Scientific and performance documentation
+│   ├── assets/               # Documentation images and generated benchmark plots
+│   ├── benchmarks.md         # Hardware specifications, methodology, and performance benchmarks
+│   └── theory.md             # Scientific formulation, mathematical theory, and software defaults
 ├── gui/                      # Graphical User Interface built with PyQt/PySide
 │   ├── batch_export_dialog.py # Dialog for batch analysis and multi-format export
 │   ├── constants.py          # Color palettes, styling constants, and default UI parameters
@@ -137,7 +142,13 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 │   ├── spectral_tab.py       # Tab container for PSD, F-Test, and Cross-Spectrum results
 │   ├── tabs.py               # Tab management for daily sessions and astronomical sources
 │   └── workers.py            # Multithreaded Qt workers for non-blocking computations
-├── images/                   # Screenshots and diagrams for documentation
+├── images/                   # Screenshots and diagrams for UI documentation
+├── scripts/                  # Project utility and profiling scripts
+│   └── benchmark_scaling.py  # Benchmark scaling profile generator across signal lengths
+├── tests/                    # Automated unit, integration, and benchmark test suite
+│   ├── test_benchmarks.py    # Performance benchmark test suite for pytest-benchmark
+│   ├── test_scientific.py    # Unit tests for core scientific algorithms
+│   └── test_synthetic.py     # End-to-end pipeline validation using synthetic data
 ├── app.py                    # Application entry point
 ├── example.ipynb             # Jupyter Notebook with API usage examples and algorithms
 ├── pyproject.toml            # Python project configuration and dependency specifications
@@ -336,3 +347,48 @@ These parameters define the default values for the processing pipeline and can b
 | `CROSS_SPECTRUM_DX` | `2500` | Physical distance between telescope beams (metres) |
 | `VELOCITY_N_PEAKS` | `3` | Number of top cross-spectral peaks used for drift velocity estimation |
 
+---
+
+## Scientific Theory
+
+The detailed mathematical formulation, underlying assumptions, variable definitions, and units for all core algorithms are documented in [Scientific Formulation & Theory](docs/theory.md).
+
+---
+
+## Validation via Synthetic Datasets
+
+To ensure the physical correctness and numerical precision of the pipeline, we validate all core modules using a **Synthetic Scintillation Signal Generator** (`core/synthetic_generator.py`). This generator simulates realistic power-law colored noise ($PSD(f) \propto f^{-8/3}$), dual-channel propagation delays, deterministic wave harmonics, and experimental impairments (impulse spikes and calibration gaps).
+
+Our validation suite (`tests/test_synthetic.py`) confirms:
+1. **Outlier Suppression:** The Hampel filter detects and replaces injected impulse spikes ($>10\sigma$) with local rolling medians, restoring signal integrity without distorting nearby clean data.
+2. **Gap Interpolation:** The AR(1) red noise gap-filling algorithm interpolates calibration blocks using surrounding signal variance (estimated via MAD) and blends the boundaries with a cosine cross-fade, avoiding spectral bias.
+3. **Cross-Spectral Drift Velocity:** For an injected delay of $\tau = 1.5\text{ s}$ over a $2500\text{ m}$ baseline, the cross-spectral pipeline successfully detects the peak frequency and recovers the true velocity $v = 1667\text{ m/s}$ within a tight tolerance.
+
+---
+
+## Limitations & Signal Constraints
+
+Users should be aware of the following physical and signal constraints when analyzing observations:
+
+1. **Nyquist Frequency Limit:**
+   The maximum detectable scintillation frequency is constrained by the sampling rate $fs$:
+   $$f_{\text{Nyquist}} = \frac{fs}{2}$$
+   For the default URAN-4 observations ($fs = 1.0\text{ Hz}$), the maximum frequency is $0.5\text{ Hz}$ (minimum period $2\text{ s}$). Any high-frequency activity above this limit will alias.
+
+2. **Spectral Resolution Limit:**
+   The frequency resolution of the multitaper spectrum is bounded by the observation length $T$:
+   $$\Delta f = \frac{1}{T}$$
+   Attempting to resolve periodicities comparable to the total observation length (e.g., $T_0 > T/3$) will lead to large uncertainties due to spectral windowing.
+
+3. **Phase Wrapping & Velocity Ambiguity:**
+   The cross-spectral phase difference $\theta(f)$ is computed within the principal domain $[-180^\circ, 180^\circ]$. If the propagation delay $\tau = dx/v$ exceeds the half-period of a given scintillation frequency $f$:
+   $$|\tau| > \frac{1}{2f}$$
+   the phase wraps around, leading to velocity estimation ambiguity. For a baseline $dx = 2500\text{ m}$ and $f = 0.1\text{ Hz}$, the maximum delay before wrapping is $\tau_{\text{max}} = 5.0\text{ s}$, which corresponds to a lower velocity limit of $v_{\text{min}} = 500\text{ m/s}$. Velocities slower than this will require manual phase unwrapping.
+
+---
+
+## Performance Benchmarks
+
+Performance of core DSP, spectral estimation, and wavelet transforms has been profiled using `pytest-benchmark` across standard observation epochs ($N = 2,000$ samples) and evaluated for runtime scaling up to $N = 50,000$ samples.
+
+For detailed hardware environment specs, empirical benchmark tables, scaling curves, and instructions for reproducing results, see [Performance Benchmarks](docs/benchmarks.md).

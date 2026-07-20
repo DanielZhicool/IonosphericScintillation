@@ -1,6 +1,7 @@
+from typing import Any
+
 import numpy as np
 import pytest
-from typing import Any
 
 from core.signal_processing import (
     clean_and_smooth_signal,
