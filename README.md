@@ -24,12 +24,13 @@ This suite integrates a range of digital signal processing (DSP) and statistical
 *   **Synchrosqueezing Transform (SST):** Reassigns CWT coefficients along the frequency axis to sharpen the spectrogram, producing extremely narrow, high-resolution spectral lines.
 *   **Butterworth Bandpass Filter:** A 4th-order SOS (Second-Order Sections) filter used to isolate specific temporal scales, categorizing them into _"Small bubbles"_ ($5\text{--}150\text{ s}$) and _"Large clouds"_ ($150\text{--}600\text{ s}$).
 
-### 3\. Spectral Analysis & Drift Velocity Estimation
+### 3. Spectral Analysis & Drift Velocity Estimation
 
 *   **Thomson Multitaper Power Spectral Density (PSD):** Uses Discrete Prolate Spheroidal Sequences (DPSS/Slepian tapers) to estimate a low-variance, low-bias power spectrum.
-*   **Thomson F-Test:** A statistical test used to detect deterministic harmonic lines against a stochastic red-noise background, determining the fundamental oscillation period ($T_0$) and its harmonics ($2T, 3T$).
-*   **Multitaper Cross-Spectral Analysis:** Calculates the co-spectrum (in-phase), quadrature spectrum (phase shift), and magnitude-squared coherence between the 20 MHz and 25 MHz interferometric channels.
-*   **Ionospheric Drift Velocity Estimation (IDVE):** Calculates time delays and horizontal drift velocities based on the cross-spectral phase difference and the known physical separation of the telescope beams ($2500\text{ m}$).
+*   **Jackknife 95% Confidence Intervals:** Calculates non-parametric Jackknife log-PSD standard errors across DPSS tapers to provide robust statistical confidence bounds.
+*   **Thomson F-Test with FDR Control:** A statistical test used to detect deterministic harmonic lines against a continuous background, incorporating Benjamini-Hochberg False Discovery Rate (FDR at $\alpha = 0.05$) control for multiple hypothesis testing.
+*   **Multitaper Cross-Spectral Analysis & Coherence Gating:** Calculates the co-spectrum, quadrature spectrum, and magnitude-squared coherence between 20 MHz and 25 MHz interferometric channels. Automatically gates velocity calculations when coherence $C_{xy} < 0.7$.
+*   **Weighted Linear Phase Regression IDVE:** Estimates propagation time delays $\tau$ and horizontal drift velocities $v$ using unwrapped Weighted Least Squares (WLS) phase slope regression ($\phi(f) = a f + b$) over high-coherence bands, propagating analytical 95% confidence intervals via the Delta method.
 
 ---
 
@@ -85,15 +86,16 @@ end
 subgraph SPEC["2B. Multitaper Spectral Analysis"]
     Tukey2["Tukey Window"]
     BP2["Butterworth Bandpass"]
-    PSD["Multitaper PSD"]
-    FTest["Thomson F-Test"]
-    Cross["Cross Spectrum"]
-    IDVE["Drift Velocity Estimation"]
+    PSD["Multitaper PSD\n+ Jackknife 95% CI"]
+    FTest["Thomson F-Test\n+ FDR Control"]
+    Cross["Cross Spectrum\n& Coherence"]
+    IDVE["WLS Phase Regression\nDrift Velocity (IDVE)"]
 
     Tukey2 --> BP2
     BP2 --> PSD
+    BP2 --> FTest
     BP2 --> Cross
-    PSD --> FTest
+    FTest --> IDVE
     Cross --> IDVE
 end
 
@@ -110,6 +112,7 @@ SG --> Tukey2
 SST --> Export
 PSD --> Export
 FTest --> Export
+Cross --> Export
 IDVE --> Export
 
 %% ---------- Classes ----------
@@ -127,8 +130,9 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 │   ├── config.py             # Default configuration and hyperparameters
 │   ├── parsers.py            # Parsers for raw binary PM6 data and REGI log files
 │   ├── signal_processing.py  # DSP filters (Hampel, Savitzky-Golay, red noise interpolation, CWT/SST)
-│   ├── spectral_analysis.py  # Thomson multitaper PSD, F-test, cross-spectral analysis & IDVE
-│   └── synthetic_generator.py # Synthetic scintillation signal and noise generator
+│   ├── spectral_analysis.py  # Thomson multitaper PSD, F-test, cross-spectral analysis & WLS IDVE
+│   ├── synthetic_generator.py # Synthetic scintillation signal and noise generator
+│   └── types.py              # Dataclass result containers (MultitaperPSDResult, VelocityEstimate, etc.)
 ├── docs/                      # Scientific and performance documentation
 │   ├── assets/               # Documentation images and generated benchmark plots
 │   ├── benchmarks.md         # Hardware specifications, methodology, and performance benchmarks
@@ -147,8 +151,14 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 │   └── benchmark_scaling.py  # Benchmark scaling profile generator across signal lengths
 ├── tests/                    # Automated unit, integration, and benchmark test suite
 │   ├── test_benchmarks.py    # Performance benchmark test suite for pytest-benchmark
-│   ├── test_scientific.py    # Unit tests for core scientific algorithms
-│   └── test_synthetic.py     # End-to-end pipeline validation using synthetic data
+│   ├── test_multitaper.py    # Unit tests for Multitaper PSD & DPSS tapers
+│   ├── test_parsers.py       # Unit tests for PM6 and REGI file parsing
+│   ├── test_pchip.py         # Unit tests for PCHIP interpolation
+│   ├── test_preprocessing.py # Unit tests for Hampel, SavGol, & red noise gap filling
+│   ├── test_statistical_precision.py # Statistical tests for Jackknife CIs, FDR control, & WLS phase regression
+│   ├── test_synthetic.py     # End-to-end pipeline validation using synthetic data
+│   ├── test_validation.py    # Edge case & contract validation tests
+│   └── test_velocity.py     # Unit tests for velocity estimation & coherence gating
 ├── app.py                    # Application entry point
 ├── example.ipynb             # Jupyter Notebook with API usage examples and algorithms
 ├── pyproject.toml            # Python project configuration and dependency specifications
@@ -344,8 +354,12 @@ These parameters define the default values for the processing pipeline and can b
 | `MTM_N_TAPERS` | `7` | Number of DPSS tapers for the Thomson Multitaper method |
 | `MTM_NW` | `4.0` | Time-bandwidth product for DPSS windows |
 | `FTEST_CONFIDENCE` | `0.95` | F-test significance level |
+| `FDR_ALPHA` | `0.05` | False Discovery Rate threshold for Thomson F-test multiple testing control |
 | `CROSS_SPECTRUM_DX` | `2500` | Physical distance between telescope beams (metres) |
 | `VELOCITY_N_PEAKS` | `3` | Number of top cross-spectral peaks used for drift velocity estimation |
+| `COHERENCE_THRESHOLD` | `0.7` | Minimum magnitude-squared coherence threshold for valid velocity estimation |
+| `PHASE_REGRESSION_BANDWIDTH_HZ` | `0.02` | Half-bandwidth (Hz) around peak for weighted phase slope regression |
+| `COMPUTE_JACKKNIFE_CI` | `True` | Enable non-parametric Jackknife 95% confidence bounds on Multitaper PSD |
 
 ---
 
@@ -389,6 +403,6 @@ Users should be aware of the following physical and signal constraints when anal
 
 ## Performance Benchmarks
 
-Performance of core DSP, spectral estimation, and wavelet transforms has been profiled using `pytest-benchmark` across standard observation epochs ($N = 2,000$ samples) and evaluated for runtime scaling up to $N = 50,000$ samples.
+Performance of core DSP, spectral estimation, and wavelet transforms has been profiled using `pytest-benchmark` across standard observation epochs ($N = 2,000$ samples / $33.3\text{ min}$) and evaluated for runtime scaling up to $N = 506,069$ samples ($5.86\text{ days}$).
 
 For detailed hardware environment specs, empirical benchmark tables, scaling curves, and instructions for reproducing results, see [Performance Benchmarks](docs/benchmarks.md).

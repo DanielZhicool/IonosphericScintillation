@@ -6,7 +6,7 @@ This document provides the mathematical foundations, underlying assumptions, mat
 
 ## 1. Common Mathematical Notation
 
-To avoid redundant variable definitions across sections, the mathematical symbols, physical variables, and software parameters used throughout this document are summarized below:
+The following table lists the mathematical symbols, physical variables, and software parameters used throughout this document.
 
 | Symbol | Description | Dimension / Units | Software Default / Implementation |
 | :--- | :--- | :--- | :--- |
@@ -160,25 +160,85 @@ For dual-frequency observations (e.g., 20 MHz and 25 MHz) separated by a baselin
 
 $$\theta(f) = \text{angle}\left( S_{12}(f) \right)$$
 
-$$\tau(f) = \frac{\theta(f)}{360^\circ \cdot f}$$
+$$\tau = \frac{\theta(f_0)}{360^\circ \cdot f_0}$$
 
-$$v(f) = \frac{dx}{|\tau(f)|}$$
+$$v = \text{sign}(\tau) \frac{dx}{|\tau|}$$
 
 #### Assumptions:
 - **One-Dimensional Drift:** The irregularities drift horizontally along the baseline axis of the two receiver beams.
-- **Dispersionless propagation:** The time delay $\tau(f)$ is frequency-independent in the scintillation band.
-- **No Phase Wrapping:** The delay is small enough such that $|\theta(f)| < 180^\circ$ (i.e., $|\tau| < \frac{1}{2f}$). If wrapping occurs, it causes velocity estimation ambiguity.
+- **Dispersionless propagation:** The time delay $\tau$ is frequency-independent in the scintillation band.
+- **No Phase Wrapping:** The delay is small enough such that $|\theta(f)| < 180^\circ$ (i.e., $|\tau| < \frac{1}{2f}$). If wrapping occurs, `np.unwrap` resolves phase $2\pi$ branch jumps across adjacent frequencies.
 
 #### Implementation & Software Defaults:
-- **Function:** `core.spectral_analysis.estimate_drift_velocity()`
+- **Function:** `core.spectral_analysis.estimate_velocities()`
 - **Phase Representation:** Phase $\theta(f)$ is computed in degrees via `np.degrees(np.angle(S12))`.
-- **Defaults:** Baseline distance $dx$ defaults to $2500.0\text{ m}$ (URAN-4 receiver configuration). Frequency range for integration is restricted to the active scintillation band $[f_{\text{low}}, f_{\text{high}}]$.
+- **Defaults:** Baseline distance $dx$ defaults to $2500.0\text{ m}$ (URAN-4 receiver configuration).
+
+---
+
+### 4.4. Jackknife 95% Confidence Intervals for Multitaper PSD
+To quantify variance in Multitaper spectral estimates, non-parametric Jackknife confidence bounds are calculated over the $K$ orthogonal DPSS tapers. The leave-one-out spectral estimate for taper $j$ is:
+
+$$S_{-j}(f) = \frac{1}{K-1} \sum_{k \neq j} S_k(f)$$
+
+The standard error of the log-power spectrum $\log \hat{S}(f)$ is:
+
+$$\text{SE}(\log \hat{S}(f)) = \sqrt{ \frac{K-1}{K} \sum_{j=0}^{K-1} \left( \log S_{-j}(f) - \overline{\log S}(f) \right)^2 }$$
+
+Log-normal $95\%$ confidence interval bounds are then given by:
+
+$$\text{CI}_{95\%}(f) = \left[ \hat{S}(f) \cdot e^{-1.96 \cdot \text{SE}(f)}, \; \hat{S}(f) \cdot e^{+1.96 \cdot \text{SE}(f)} \right]$$
+
+#### Implementation & Software Defaults:
+- **Function:** `core.spectral_analysis.compute_multitaper_psd()`
+- **Result Container:** Returns `MultitaperPSDResult` holding `psd`, `log_psd_se`, `ci95_low`, and `ci95_high`.
+
+---
+
+### 4.5. Multiple Testing Correction (Benjamini-Hochberg FDR)
+When evaluating the Thomson F-statistic across $M$ discrete frequency bins in the analysis passband $[f_{\text{low}}, f_{\text{high}}]$, multiple hypothesis testing increases false positive peak detections. Raw p-values are computed from the $F(2, 2K-2)$ survival function:
+
+$$p_i = 1 - F_{\text{cdf}}(F_i, 2, 2K-2)$$
+
+The Benjamini-Hochberg (BH) procedure sorts the $M$ p-values $p_{(1)} \le p_{(2)} \le \dots \le p_{(M)}$ and identifies the maximum index $k_{\max}$ such that:
+
+$$p_{(k)} \le \frac{k}{M} \cdot \alpha_{\text{FDR}}$$
+
+The effective critical F-statistic threshold $F_{\text{FDR}}$ is then computed from $p_{(k_{\max})}$, strictly controlling False Discovery Rate at $\alpha_{\text{FDR}} = 0.05$.
+
+#### Implementation & Software Defaults:
+- **Function:** `core.spectral_analysis.compute_ftest()`
+- **Defaults:** `fdr_alpha` defaults to $0.05$.
+
+---
+
+### 4.6. Weighted Linear Phase Regression & Coherence Gating
+For broadband scintillation irregularities covering multiple contiguous frequency bins, the phase difference $\phi_{\text{rad}}(f)$ exhibits a linear slope with respect to frequency:
+
+$$\phi_{\text{rad}}(f) = a \cdot f + b, \quad \text{where } a = 2\pi \tau$$
+
+Weighted Least Squares (WLS) regression is fitted over frequencies where magnitude-squared coherence $C_{xy}(f) \ge C_{\text{min}}$ ($0.7$), using weights $w_i = C_{xy}(f_i)$:
+
+$$\tau = \frac{a}{2\pi}, \quad v = \text{sign}(\tau) \frac{dx}{|\tau|}$$
+
+Analytical 95% confidence intervals for $\tau$ and $v$ are propagated from the slope standard error $\text{SE}(a)$:
+
+$$\text{SE}(\tau) = \frac{\text{SE}(a)}{2\pi}, \quad \text{SE}(v) = \left|\frac{dx}{\tau^2}\right| \cdot \text{SE}(\tau)$$
+
+If mean coherence across the peak region falls below $C_{\text{min}} = 0.7$, the velocity estimate is marked invalid (`is_valid = False`).
+
+#### Implementation & Software Defaults:
+- **Function:** `core.spectral_analysis.estimate_velocities()`
+- **Result Container:** Returns a list of `VelocityEstimate` dataclass instances.
+- **Defaults:** `coherence_threshold` defaults to $0.7$; `enable_phase_regression` defaults to `False` (single-point peak phase default).
 
 ---
 
 ## References
 
 1. **Thomson, D. J. (1982).** *Spectrum estimation and harmonic analysis.* Proceedings of the IEEE, 70(9), 1055-1096.
-2. **Hampel, F. R. (1974).** *The influence curve and its role in robust estimation.* Journal of the American Statistical Association, 69(346), 383-393.
-3. **Savitzky, A., & Golay, M. J. (1964).** *Smoothing and differentiation of data by simplified least squares procedures.* Analytical Chemistry, 36(8), 1627-1639.
-4. **Yeh, K. C., & Liu, C. H. (1982).** *Radio wave scintillations in the ionosphere.* Proceedings of the IEEE, 70(4), 324-360.
+2. **Percival, D. B., & Walden, A. T. (1993).** *Spectral Analysis for Physical Applications.* Cambridge University Press.
+3. **Benjamini, Y., & Hochberg, Y. (1995).** *Controlling the false discovery rate: a practical and powerful approach to multiple testing.* Journal of the Royal Statistical Society B, 57(1), 289-300.
+4. **Hampel, F. R. (1974).** *The influence curve and its role in robust estimation.* Journal of the American Statistical Association, 69(346), 383-393.
+5. **Savitzky, A., & Golay, M. J. (1964).** *Smoothing and differentiation of data by simplified least squares procedures.* Analytical Chemistry, 36(8), 1627-1639.
+6. **Yeh, K. C., & Liu, C. H. (1982).** *Radio wave scintillations in the ionosphere.* Proceedings of the IEEE, 70(4), 324-360.
