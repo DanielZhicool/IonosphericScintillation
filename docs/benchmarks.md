@@ -104,10 +104,10 @@ To evaluate algorithmic efficiency as observation windows scale from short sub-w
 ---
 
 ### 4.1. Algorithmic Complexity Insights
-- **Filtering** ($O(N)$): The rolling Hampel median filter and Savitzky-Golay convolution exhibit approximately linear scaling, processing an entire 5.86-day PM6 recording ($N = 506,069$) in just **$410\text{ ms}$**.
-- **PCHIP Interpolation** ($O(N)$): Monotonic piecewise cubic spline evaluation scales linearly, taking under **$137\text{ ms}$** to upsample 5.86 days of continuous data.
-- **Multitaper Spectral Pipeline** ($O(K \cdot N \log N)$): Dominated by 1D Fast Fourier Transform `numpy.fft.rfft` calculations across $K=7$ tapered channels. Incorporates 4-channel Multitaper PSD, F-test, Cross-Spectrum, Weighted Linear Phase Regression, Coherence Gating ($C_{xy} \ge 0.7$), and analytical WLS 95% CIs. Scales smoothly, processing 24 hours in **$1.93\text{ s}$** and 5.86 days in **$21.50\text{ s}$**. Highly composite 5-smooth lengths ($N = 432,000 = 2^7 \cdot 3^3 \cdot 5^3$) execute faster (**$11.25\text{ s}$**) than lengths with large prime factors ($N = 260,793$, **$9.04\text{ s}$** / $N = 506,069$, **$21.50\text{ s}$**) due to FFT radix decomposition efficiency.
-- **Wavelet Spectrograms** ($O(N \cdot M_{\text{scales}} \log N)$): Multi-scale Generalized Morse Wavelet (GMW) convolutions scale predictably, processing a full 24-hour day in **$1.82\text{ s}$** (CWT) and **$3.90\text{ s}$** (SST). Sub-window ($N = 500$) response times remain under **$175\text{ ms}$** for real-time interactive exploration.
+- **Filtering** $\mathcal{O}(N)$: The rolling Hampel median filter and Savitzky-Golay convolution exhibit approximately linear scaling, processing an entire 5.86-day PM6 recording ($N = 506,069$) in just **410 ms**.
+- **PCHIP Interpolation** $\mathcal{O}(N)$: Monotonic piecewise cubic spline evaluation scales linearly, taking under **137 ms** to upsample 5.86 days of continuous data.
+- **Multitaper Spectral Pipeline** $\mathcal{O}(K \cdot N \log N)$: Dominated by 1D Fast Fourier Transform `numpy.fft.rfft` calculations across $K=7$ tapered channels. Incorporates 4-channel Multitaper PSD, F-test, Cross-Spectrum, Weighted Linear Phase Regression, Coherence Gating ($C_{xy} \ge 0.7$), and analytical WLS 95% CIs. Scales smoothly, processing 24 hours in **1.93 s** and 5.86 days in **21.50 s**. Highly composite 5-smooth lengths ($N = 432,000 = 2^7 \cdot 3^3 \cdot 5^3$) execute faster (**11.25 s**) than lengths with large prime factors ($N = 260,793$, **9.04 s** / $N = 506,069$, **21.50 s**) due to FFT radix decomposition efficiency.
+- **Wavelet Spectrograms** $\mathcal{O}(N \cdot M_{\text{scales}} \log N)$: Multi-scale Generalized Morse Wavelet (GMW) convolutions scale predictably, processing a full 24-hour day in **1.82 s** (CWT) and **3.90 s** (SST). Sub-window ($N = 500$) response times remain under **175 ms** for real-time interactive exploration.
 
 ---
 
