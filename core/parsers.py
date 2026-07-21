@@ -1,4 +1,7 @@
 import re
+import warnings
+from dataclasses import dataclass
+from typing import Literal, overload
 
 import numpy as np
 import pandas as pd
@@ -6,20 +9,69 @@ import pandas as pd
 import core.config as cfg
 
 
+@dataclass(frozen=True)
+class ParseWarning:
+    """Diagnostic record generated when log or data parsing detects anomalies."""
+
+    line_number: int | None
+    raw_line: str
+    original_value: str
+    proposed_value: str
+    reason: str
+
+
 def load_pm6_data(filepath: str) -> pd.DataFrame:
     """
-    Load PM6 data and convert the Excel date format to datetime.
+    Load PM6 data and convert the MJD date format to Datetime and physical Time_sec.
 
     Args:
         filepath: Path to the PM6 text file.
 
     Returns:
-        DataFrame containing parsed PM6 data with computed P-M interferometric differences.
+        DataFrame containing parsed PM6 data with computed P-M interferometric differences
+        and derived physical sampling frequency metadata attached to `df.attrs["fs"]`.
+
+    Raises:
+        ValueError: If file is empty or cannot be parsed.
     """
     columns = ["MJD", "P1_20A", "M1_20A", "P2_20B", "M2_20B", "P3_25A", "M3_25A", "P4_25B", "M4_25B"]
-    df = pd.read_csv(filepath, sep=r"\s+", names=columns, header=30, encoding_errors="ignore")
+    try:
+        df = pd.read_csv(filepath, sep=r"\s+", names=columns, skiprows=30, header=None, encoding_errors="ignore")
+    except Exception as err:
+        raise ValueError(f"Failed to read PM6 file '{filepath}': {err}") from err
+
+    if df.empty:
+        raise ValueError(f"PM6 data file '{filepath}' is empty.")
+
+    # Convert signal columns to float
+    for col in columns[1:]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # MJD to Datetime conversion (Excel 1899-12-30 origin)
     df["Datetime"] = pd.to_datetime(df["MJD"], unit="D", origin="1899-12-30")
-    df["Time_sec"] = np.arange(len(df), dtype=np.float64)
+
+    # Derive true physical Time_sec from timestamps
+    start_dt = df["Datetime"].iloc[0]
+    df["Time_sec"] = (df["Datetime"] - start_dt).dt.total_seconds()
+
+    # Integrity & Sampling Frequency verification
+    dt = np.diff(np.asarray(df["Time_sec"], dtype=np.float64))
+    if len(dt) > 0:
+        median_dt = float(np.median(dt))
+        if median_dt <= 0:
+            warnings.warn(
+                f"Non-positive median time step in '{filepath}'. Defaulting fs=1.0.",
+                category=UserWarning,
+                stacklevel=2,
+            )
+            estimated_fs = 1.0
+        else:
+            estimated_fs = 1.0 / median_dt
+    else:
+        estimated_fs = 1.0
+
+    df.attrs["fs"] = estimated_fs
+    df.attrs["filepath"] = filepath
 
     # Compute P-M interferometric differences
     df["20 MHz Pol A (P-M)"] = df["P1_20A"] - df["M1_20A"]
@@ -30,81 +82,136 @@ def load_pm6_data(filepath: str) -> pd.DataFrame:
     return df
 
 
-def parse_regi_with_time(filepath: str, pm6_start_dt: pd.Timestamp) -> pd.DataFrame:
+@overload
+def parse_regi_with_time(
+    filepath: str,
+    pm6_start_dt: pd.Timestamp,
+    mode: str = ...,
+    return_warnings: Literal[False] = ...,
+) -> pd.DataFrame: ...
+
+
+@overload
+def parse_regi_with_time(
+    filepath: str,
+    pm6_start_dt: pd.Timestamp,
+    mode: str = ...,
+    return_warnings: Literal[True] = ...,
+) -> tuple[pd.DataFrame, list[ParseWarning]]: ...
+
+
+def parse_regi_with_time(
+    filepath: str,
+    pm6_start_dt: pd.Timestamp,
+    mode: str = "warn",
+    return_warnings: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, list[ParseWarning]]:
     """
     Reads a log file with regex, handles midnight rollovers, and returns a DataFrame with times in seconds.
 
     Args:
         filepath: Path to the registration log file.
         pm6_start_dt: The starting timestamp of the corresponding PM6 observation.
+        mode: Data repair behavior: 'strict' (raise exception), 'warn' (keep original without silent fix),
+              or 'repair' (apply correction and log warning).
+        return_warnings: If True, returns a tuple of (df_logs, warnings_list).
 
     Returns:
-        DataFrame containing chronologically sorted log events.
-    """
-    events = []
+        DataFrame containing parsed log events (or tuple of (DataFrame, warnings) if return_warnings=True).
 
-    # Pattern: captures start (HH:MM), end in parentheses, and target name
+    Raises:
+        ValueError: If mode is 'strict' and an invalid time anomaly is encountered.
+    """
+    if mode not in {"strict", "warn", "repair"}:
+        raise ValueError(f"Invalid mode '{mode}'. Must be one of 'strict', 'warn', 'repair'.")
+
+    events = []
     log_pattern = re.compile(r"^(\d{1,2}:\d{1,2})\s*-?\s*\((\d{1,2}:\d{1,2})\).*?(\S+)$")
+    warnings_list: list[ParseWarning] = []
 
     with open(filepath, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+        lines = f.readlines()
 
-            match = log_pattern.match(line)
-            if match:
-                events.append({"Start_Time": match.group(1), "End_Time": match.group(2), "Target_Name": match.group(3)})
+    for line_idx, line in enumerate(lines, start=1):
+        line_str = line.strip()
+        if not line_str:
+            continue
+
+        match = log_pattern.match(line_str)
+        if match:
+            events.append(
+                {
+                    "line_number": line_idx,
+                    "raw_line": line_str,
+                    "Start_Time": match.group(1),
+                    "End_Time": match.group(2),
+                    "Target_Name": match.group(3),
+                }
+            )
 
     df_logs = pd.DataFrame(events)
     if df_logs.empty:
-        return df_logs
+        df_logs.attrs["warnings"] = warnings_list
+        return (df_logs, warnings_list) if return_warnings else df_logs
 
-    # Chronological time parsing
     current_date = pm6_start_dt.normalize()
     last_dt = pm6_start_dt
 
     start_secs, end_secs = [], []
     for _, row in df_logs.iterrows():
+        line_idx = row["line_number"]
+        raw_line = row["raw_line"]
+
         try:
             s_dt = pd.to_datetime(f"{current_date.date()} {row['Start_Time']}:00")
-
-            # Adjust for midnight rollover
-            if s_dt.hour < last_dt.hour and (last_dt.hour - s_dt.hour) > 6:
-                current_date += pd.Timedelta(days=1)
-                s_dt += pd.Timedelta(days=1)
-
             e_dt = pd.to_datetime(f"{current_date.date()} {row['End_Time']}:00")
-
-            if e_dt < s_dt:
-                # Detect and fix typos / rollover issues:
-                # A normal single transit session lasts at most ~2 hours.
-                # If adding 1 day makes it unreasonably long (> 2 hours), it is likely a typo.
-                e_dt_rolled = e_dt + pd.Timedelta(days=1)
-                duration_rolled = e_dt_rolled - s_dt
-                if duration_rolled <= pd.Timedelta(hours=2):
-                    e_dt = e_dt_rolled
-                else:
-                    # Typo where s_dt hour is likely written too late (e.g. 21:06 instead of 20:06).
-                    # If same-day s_dt is after e_dt by less than 2 hours, we shift s_dt back by 1 hour.
-                    time_diff = s_dt - e_dt
-                    if time_diff < pd.Timedelta(hours=2):
-                        s_dt -= pd.Timedelta(hours=1)
-                    else:
-                        # Fallback: just add 1 day
-                        e_dt = e_dt_rolled
-
-            start_secs.append((s_dt - pm6_start_dt).total_seconds())
-            end_secs.append((e_dt - pm6_start_dt).total_seconds())
-            last_dt = s_dt
         except (ValueError, TypeError):
             start_secs.append(np.nan)
             end_secs.append(np.nan)
+            continue
+
+        if s_dt.hour < last_dt.hour and (last_dt.hour - s_dt.hour) > 6:
+            current_date += pd.Timedelta(days=1)
+            s_dt += pd.Timedelta(days=1)
+            e_dt += pd.Timedelta(days=1)
+
+        if e_dt < s_dt:
+            e_dt_rolled = e_dt + pd.Timedelta(days=1)
+            duration_rolled = e_dt_rolled - s_dt
+            if duration_rolled <= pd.Timedelta(hours=2):
+                e_dt = e_dt_rolled
+            else:
+                time_diff = s_dt - e_dt
+                if time_diff < pd.Timedelta(hours=2):
+                    proposed_s_dt = s_dt - pd.Timedelta(hours=1)
+                    parse_warn = ParseWarning(
+                        line_number=line_idx,
+                        raw_line=raw_line,
+                        original_value=s_dt.strftime("%H:%M"),
+                        proposed_value=proposed_s_dt.strftime("%H:%M"),
+                        reason="End time precedes start time; potential 1-hour offset typo.",
+                    )
+                    warnings_list.append(parse_warn)
+                    if mode == "strict":
+                        raise ValueError(
+                            f"End time precedes start time for line {line_idx}: '{raw_line}' ({parse_warn.reason})"
+                        )
+                    elif mode == "repair":
+                        s_dt = proposed_s_dt
+                    # If mode == 'warn', retain original s_dt without modification
+                else:
+                    e_dt = e_dt_rolled
+
+        start_secs.append((s_dt - pm6_start_dt).total_seconds())
+        end_secs.append((e_dt - pm6_start_dt).total_seconds())
+        last_dt = s_dt
 
     df_logs["Start_sec"] = start_secs
     df_logs["End_sec"] = end_secs
+    result_df = df_logs.dropna().drop(columns=["line_number", "raw_line"])
+    result_df.attrs["warnings"] = warnings_list
 
-    return df_logs.dropna()
+    return (result_df, warnings_list) if return_warnings else result_df
 
 
 def build_observation_sessions(df_logs: pd.DataFrame, pm6_max_sec: float) -> tuple[pd.DataFrame, pd.DataFrame, list]:

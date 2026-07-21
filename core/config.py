@@ -1,7 +1,9 @@
 """
-Core configuration constants. Centralize tunable parameters here for easier
-experimentation, testing and documentation.
+Core configuration constants and ProcessingConfig container.
+Centralize tunable parameters here for easier experimentation, testing, and documentation.
 """
+
+from dataclasses import dataclass
 
 # Session parsing
 GAP_THRESHOLD = 3600  # seconds
@@ -35,5 +37,38 @@ CWT_SHOW_LINEAR_AMP = True  # True to show linear wavelet amplitude on colorbar,
 MTM_N_TAPERS = 7  # Number of DPSS tapers (Thomson Multitaper)
 MTM_NW = 4.0  # Time-bandwidth product for DPSS windows
 FTEST_CONFIDENCE = 0.95  # F-test significance level
+FDR_ALPHA = 0.05  # False Discovery Rate threshold for multiple testing
 CROSS_SPECTRUM_DX = 2500  # Beam separation in meters (model parameter)
 VELOCITY_N_PEAKS = 3  # Number of cross-spectral peaks to report
+COHERENCE_THRESHOLD = 0.7  # Coherence significance threshold
+PHASE_REGRESSION_BANDWIDTH_HZ = 0.02  # Half-bandwidth around peak for weighted phase regression
+COMPUTE_JACKKNIFE_CI = True  # Enable Jackknife 95% confidence intervals for Multitaper PSD
+
+
+@dataclass(frozen=True)
+class ProcessingConfig:
+    """
+    Immutable configuration container for ionospheric scintillation DSP pipelines.
+    """
+
+    sampling_rate: float = 1.0
+    tukey_alpha: float = TUKEY_ALPHA
+    pchip_factor: int = PCHIP_FACTOR
+    pchip_long_signal_threshold: int = PCHIP_LONG_SIGNAL_THRESHOLD
+    window_size: int = DEFAULT_WINDOW_SIZE
+    n_sigmas: float = DEFAULT_N_SIGMAS
+    savgol_polyorder: int = SAVGOL_POLYORDER
+    mtm_nw: float = MTM_NW
+    mtm_n_tapers: int = MTM_N_TAPERS
+    ftest_confidence: float = FTEST_CONFIDENCE
+    fdr_alpha: float = FDR_ALPHA
+    coherence_threshold: float = COHERENCE_THRESHOLD
+    cross_spectrum_dx: float = CROSS_SPECTRUM_DX
+    velocity_n_peaks: int = VELOCITY_N_PEAKS
+    phase_regression_bandwidth_hz: float = PHASE_REGRESSION_BANDWIDTH_HZ
+    enable_phase_regression: bool = False
+    compute_jackknife_ci: bool = COMPUTE_JACKKNIFE_CI
+    cwt_nv_bubbles: int = CWT_NV_BUBBLES
+    cwt_nv_clouds: int = CWT_NV_CLOUDS
+    morse_gamma: float = MORSE_GAMMA
+    morse_beta: float = MORSE_BETA

@@ -17,27 +17,47 @@ def clean_and_smooth_signal(
     n_sigmas: float | None = None,
     apply_smoothing: bool = True,
     polyorder: int | None = None,
+    config: cfg.ProcessingConfig | None = None,
 ) -> np.ndarray:
     """
     Clean a radio-astronomy signal by removing spikes/clusters and applying smoothing.
 
     Args:
         signal: 1D numpy array representing the signal data.
-        window_size: Odd window length for rolling operations. Defaults to cfg.DEFAULT_WINDOW_SIZE.
-        n_sigmas: Outlier threshold in sigma units. Defaults to cfg.DEFAULT_N_SIGMAS.
+        window_size: Odd window length for rolling operations.
+            Defaults to config.window_size or cfg.DEFAULT_WINDOW_SIZE.
+        n_sigmas: Outlier threshold in sigma units. Defaults to config.n_sigmas or cfg.DEFAULT_N_SIGMAS.
         apply_smoothing: Whether to apply Savitzky-Golay smoothing.
-        polyorder: Polynomial order for Savitzky-Golay filter. Defaults to cfg.SAVGOL_POLYORDER.
+        polyorder: Polynomial order for Savitzky-Golay filter.
+            Defaults to config.savgol_polyorder or cfg.SAVGOL_POLYORDER.
+        config: Optional ProcessingConfig container override.
 
     Returns:
         1D numpy array of the cleaned and smoothed signal.
+
+    Raises:
+        ValueError: If input signal is empty, contains non-finite values, window_size < 1, or n_sigmas <= 0.
     """
+    arr = np.asarray(signal, dtype=float)
+    if len(arr) == 0:
+        raise ValueError("Input signal is empty.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Input signal contains non-finite values (NaN or Inf).")
+
     if window_size is None:
-        window_size = cfg.DEFAULT_WINDOW_SIZE
+        window_size = config.window_size if config is not None else cfg.DEFAULT_WINDOW_SIZE
+    if window_size < 1:
+        raise ValueError(f"window_size must be >= 1, got {window_size}")
+    if window_size > len(arr):
+        raise ValueError(f"window_size ({window_size}) must be less than or equal to signal length ({len(arr)})")
     if n_sigmas is None:
-        n_sigmas = cfg.DEFAULT_N_SIGMAS
+        n_sigmas = config.n_sigmas if config is not None else cfg.DEFAULT_N_SIGMAS
+    if n_sigmas <= 0:
+        raise ValueError(f"n_sigmas must be > 0, got {n_sigmas}")
     if polyorder is None:
-        polyorder = cfg.SAVGOL_POLYORDER
-    s = pd.Series(signal)
+        polyorder = config.savgol_polyorder if config is not None else cfg.SAVGOL_POLYORDER
+
+    s = pd.Series(arr)
 
     # Step 1: Outlier detection (Hampel-like)
     # min_periods=1 ensures edge samples are still tested (otherwise the rolling
@@ -55,7 +75,7 @@ def clean_and_smooth_signal(
     # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
         smooth_window = window_size if window_size % 2 != 0 else window_size + 1
-        if smooth_window > 3:
+        if smooth_window > 3 and len(cleaned_signal) >= smooth_window:
             cleaned_signal = savgol_filter(cleaned_signal, window_length=smooth_window, polyorder=polyorder)
 
     return cleaned_signal
@@ -88,8 +108,10 @@ def fill_gap_with_red_noise(
         1D numpy array with the gap filled.
     """
 
-    signal_cleaned = signal.copy()
+    signal_cleaned = np.asarray(signal, dtype=float).copy()
     N = len(signal_cleaned)
+    if N == 0:
+        return signal_cleaned
 
     if start_idx >= end_idx or start_idx < 0 or end_idx > N:
         return signal_cleaned
@@ -156,22 +178,16 @@ def fill_gap_with_red_noise(
     red_noise = red_noise * target_std + target_mean
 
     # Boundary blend: cosine cross-fade instead of a linear ramp.
-    # A linear ramp injects a deterministic trend whose power concentrates at
-    # low frequencies, distorting the f^-2 spectral shape for long gaps.
-    # The cosine fade limits the correction to a short fringe at each edge,
-    # leaving the interior noise statistics intact.
     left_val = signal_cleaned[start_idx - 1] if start_idx > 0 else red_noise[0]
     right_val = signal_cleaned[end_idx] if end_idx < N else red_noise[-1]
 
     blend_len = min(32, length // 4)  # fade zone: up to 32 samples or 25% of gap
 
     if blend_len > 0:
-        # Left fade: smoothly force red_noise[0] -> left_val over blend_len samples
         t_left = np.linspace(0.0, 1.0, blend_len)
         left_weight = 0.5 * (1.0 + np.cos(np.pi * t_left))  # 1 -> 0
         red_noise[:blend_len] = left_weight * left_val + (1.0 - left_weight) * red_noise[:blend_len]
 
-        # Right fade: smoothly force red_noise[-1] -> right_val
         t_right = np.linspace(0.0, 1.0, blend_len)
         right_weight = 0.5 * (1.0 + np.cos(np.pi * t_right[::-1]))  # 0 -> 1
         red_noise[-blend_len:] = right_weight * right_val + (1.0 - right_weight) * red_noise[-blend_len:]
@@ -180,35 +196,63 @@ def fill_gap_with_red_noise(
     return signal_cleaned
 
 
-def upsample_pchip(signal: np.ndarray, fs: float, factor: int | None = None) -> tuple[np.ndarray, float]:
+def upsample_pchip(
+    signal: np.ndarray,
+    fs: float,
+    factor: int | None = None,
+    config: cfg.ProcessingConfig | None = None,
+) -> tuple[np.ndarray, float]:
     """
-    Upsamples a signal using PCHIP interpolation.
+    Upsamples a signal using PCHIP interpolation with exact time grid step alignment.
 
     PCHIP is chosen to prevent overshoot (ringing artifacts) common in splines.
 
     Args:
         signal: 1D numpy array of the input signal.
         fs: Original sampling frequency in Hz.
-        factor: Upsampling multiplier. Defaults to cfg.PCHIP_FACTOR.
+        factor: Upsampling multiplier. Defaults to config.pchip_factor or cfg.PCHIP_FACTOR.
+        config: Optional ProcessingConfig container override.
 
     Returns:
         A tuple of (upsampled_signal, new_fs).
+
+    Raises:
+        ValueError: If signal is empty, contains non-finite values, fs <= 0, or factor < 1.
     """
+    if fs <= 0:
+        raise ValueError(f"Sampling frequency fs must be positive, got {fs}")
     if factor is None:
-        factor = cfg.PCHIP_FACTOR
-    N = len(signal)
-    t = np.arange(N) / fs
+        factor = config.pchip_factor if config is not None else cfg.PCHIP_FACTOR
+    if factor < 1:
+        raise ValueError(f"Upsampling factor must be >= 1, got {factor}")
 
-    new_N = N * factor
-    t_new = np.linspace(t[0], t[-1], new_N)
+    arr = np.asarray(signal, dtype=float)
+    N = len(arr)
+    if N == 0:
+        raise ValueError("Input signal is empty.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Input signal contains non-finite values (NaN or Inf).")
+    if N < 2 or factor == 1:
+        return arr.copy(), float(fs)
 
-    new_signal = pchip_interpolate(t, signal, t_new)
-    new_fs = fs * factor
+    new_fs = float(fs * factor)
+    n_new = (N - 1) * factor + 1
+    t_orig = np.arange(N, dtype=float) / fs
+    t_new = np.arange(n_new, dtype=float) / new_fs
 
+    new_signal = pchip_interpolate(t_orig, arr, t_new)
     return new_signal, new_fs
 
 
-def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, order: int = 4) -> np.ndarray:
+def bandpass_filter(
+    data: np.ndarray,
+    lowcut: float,
+    highcut: float,
+    fs: float,
+    order: int = 4,
+    tukey_alpha: float | None = None,
+    config: cfg.ProcessingConfig | None = None,
+) -> np.ndarray:
     """
     Applies a stable bandpass filter with edge effect protection.
 
@@ -218,18 +262,42 @@ def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: float, 
         highcut: Upper cutoff frequency in Hz.
         fs: Sampling frequency in Hz.
         order: Filter order. Defaults to 4.
+        tukey_alpha: Tapering alpha parameter for Tukey window. Defaults to config.tukey_alpha or cfg.TUKEY_ALPHA.
+        config: Optional ProcessingConfig container override.
 
     Returns:
         1D numpy array of the filtered signal.
-    """
-    # Remove linear trend (baseline drift); this also removes the DC offset.
-    data_detrended = detrend(data, type="linear")
 
-    # 2. Smoothly taper 5% at the edges to zero to avoid filter shock
-    window = tukey(len(data_detrended), alpha=0.05)
-    data_ready = data_detrended * window
+    Raises:
+        ValueError: If input data is empty, contains non-finite values, fs <= 0, lowcut <= 0,
+                    highcut <= lowcut, or highcut >= Nyquist frequency (0.5 * fs).
+    """
+    arr = np.asarray(data, dtype=float)
+    if len(arr) == 0:
+        raise ValueError("Input data for bandpass filter is empty.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError("Input data for bandpass filter contains non-finite values (NaN or Inf).")
+    if fs <= 0:
+        raise ValueError(f"Sampling frequency fs must be positive, got {fs}")
+    if lowcut <= 0:
+        raise ValueError(f"lowcut must be > 0, got {lowcut}")
+    if highcut <= lowcut:
+        raise ValueError(f"highcut ({highcut} Hz) must be greater than lowcut ({lowcut} Hz)")
 
     nyq = 0.5 * fs
+    if highcut >= nyq:
+        raise ValueError(f"highcut ({highcut} Hz) must be strictly less than Nyquist frequency ({nyq} Hz)")
+
+    if tukey_alpha is None:
+        tukey_alpha = config.tukey_alpha if config is not None else cfg.TUKEY_ALPHA
+
+    # Remove linear trend (baseline drift); this also removes the DC offset.
+    data_detrended = detrend(arr, type="linear")
+
+    # Smoothly taper at the edges to zero to avoid filter shock
+    window = tukey(len(data_detrended), alpha=tukey_alpha)
+    data_ready = data_detrended * window
+
     low = lowcut / nyq
     high = highcut / nyq
 
@@ -245,6 +313,7 @@ def compute_cwt_spectrogram(
     nv: int | None = None,
     use_ssq: bool = True,
     cancel_check: Callable[[], bool] | None = None,
+    config: cfg.ProcessingConfig | None = None,
 ) -> np.ndarray:
     """
     Computes a Continuous Wavelet Transform (CWT) spectrogram based on the Morse wavelet.
@@ -257,14 +326,24 @@ def compute_cwt_spectrogram(
         fs: Sampling frequency in Hz.
         lowcut: Lower frequency bound of interest in Hz.
         highcut: Upper frequency bound of interest in Hz.
-        nv: Number of voices per octave. Defaults to cfg.CWT_NV_BUBBLES
-            or cfg.CWT_NV_CLOUDS depending on the band.
+        nv: Number of voices per octave. Defaults to config.cwt_nv_bubbles / config.cwt_nv_clouds.
         use_ssq: Whether to use Synchrosqueezing for enhanced time-frequency resolution.
         cancel_check: Optional callback to check for cancellation request.
+        config: Optional ProcessingConfig container override.
 
     Returns:
         2D numpy array representing the spectrogram image in (time, frequency) orientation.
     """
+    if fs <= 0:
+        raise ValueError(f"Sampling frequency fs must be positive, got {fs}")
+    if lowcut <= 0:
+        raise ValueError(f"lowcut must be > 0, got {lowcut}")
+    if highcut <= lowcut:
+        raise ValueError(f"highcut ({highcut} Hz) must be greater than lowcut ({lowcut} Hz)")
+    nyq = 0.5 * fs
+    if highcut >= nyq:
+        raise ValueError(f"highcut ({highcut} Hz) must be strictly less than Nyquist frequency ({nyq} Hz)")
+
     # Deferred: ssqueezepy is heavy and only needed for CWT computation
     import gc
 
@@ -272,19 +351,25 @@ def compute_cwt_spectrogram(
     from ssqueezepy.utils import make_scales
     from ssqueezepy.wavelets import center_frequency
 
+    nv_bubbles = config.cwt_nv_bubbles if config is not None else cfg.CWT_NV_BUBBLES
+    nv_clouds = config.cwt_nv_clouds if config is not None else cfg.CWT_NV_CLOUDS
+    tukey_a = config.tukey_alpha if config is not None else cfg.TUKEY_ALPHA
+    gamma = config.morse_gamma if config is not None else cfg.MORSE_GAMMA
+    beta = config.morse_beta if config is not None else cfg.MORSE_BETA
+
     if nv is None:
-        nv = cfg.CWT_NV_BUBBLES if lowcut >= 1.0 / 150.0 - 1e-6 else cfg.CWT_NV_CLOUDS
+        nv = nv_bubbles if lowcut >= 1.0 / 150.0 - 1e-6 else nv_clouds
 
     N = len(signal)
     if N == 0:
         return np.zeros((1, 1))
 
     # Tukey window to suppress edge artifacts from abrupt signal ends
-    window = tukey(N, alpha=cfg.TUKEY_ALPHA)
+    window = tukey(N, alpha=tukey_a)
     processing_signal = signal * window
 
     # Setup Morse wavelet core with parameters from config
-    morse_wavelet = Wavelet(("gmw", {"gamma": cfg.MORSE_GAMMA, "beta": cfg.MORSE_BETA}))
+    morse_wavelet = Wavelet(("gmw", {"gamma": gamma, "beta": beta}))
 
     chunk_size = 32768
     overlap = 16384  # Heavily increased overlap to completely eliminate CWT boundary artifacts
@@ -466,6 +551,7 @@ def process_signal_pipeline(
     progress_callback: Callable[[int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     nv: int | None = None,
+    config: cfg.ProcessingConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Full processing pipeline for the interactive UI.
@@ -478,12 +564,13 @@ def process_signal_pipeline(
         fs: Original sampling frequency in Hz.
         lowcut: Lower frequency bound in Hz.
         highcut: Upper frequency bound in Hz.
-        window_size: Outlier window length. Defaults to cfg.DEFAULT_WINDOW_SIZE.
-        n_sigmas: Outlier threshold. Defaults to cfg.DEFAULT_N_SIGMAS.
+        window_size: Outlier window length. Defaults to config.window_size or cfg.DEFAULT_WINDOW_SIZE.
+        n_sigmas: Outlier threshold. Defaults to config.n_sigmas or cfg.DEFAULT_N_SIGMAS.
         apply_smoothing: Whether to apply Savitzky-Golay smoothing.
         progress_callback: Optional callback taking an integer percentage (0-100).
         cancel_check: Optional callback returning True to abort early.
         nv: Override for voices-per-octave (CWT resolution).
+        config: Optional ProcessingConfig container override.
 
     Returns:
         A tuple of (downsampled_filtered_signal, spectrogram_image_data).
@@ -497,26 +584,31 @@ def process_signal_pipeline(
         window_size=window_size,
         n_sigmas=n_sigmas,
         apply_smoothing=apply_smoothing,
+        config=config,
     )
     if progress_callback:
         progress_callback(20)
 
     # Performance shortcut for very long signals (e.g. Global View).
-    # PCHIP upsampling is skipped above cfg.PCHIP_LONG_SIGNAL_THRESHOLD because
+    # PCHIP upsampling is skipped above threshold because
     # it is memory-intensive and the bandpass filter's effective resolution
     # degrades only modestly at the original fs for long observations.
     N_orig = len(raw_signal)
-    actual_pchip_factor = cfg.PCHIP_FACTOR if N_orig <= cfg.PCHIP_LONG_SIGNAL_THRESHOLD else 1
+    pchip_fac = config.pchip_factor if config is not None else cfg.PCHIP_FACTOR
+    pchip_thresh = config.pchip_long_signal_threshold if config is not None else cfg.PCHIP_LONG_SIGNAL_THRESHOLD
+    actual_pchip_factor = pchip_fac if N_orig <= pchip_thresh else 1
 
     should_use_ssq = True
-    actual_nv = nv if nv is not None else (cfg.CWT_NV_BUBBLES if lowcut >= 1.0 / 150.0 - 1e-6 else cfg.CWT_NV_CLOUDS)
+    nv_bubbles = config.cwt_nv_bubbles if config is not None else cfg.CWT_NV_BUBBLES
+    nv_clouds = config.cwt_nv_clouds if config is not None else cfg.CWT_NV_CLOUDS
+    actual_nv = nv if nv is not None else (nv_bubbles if lowcut >= 1.0 / 150.0 - 1e-6 else nv_clouds)
 
     if cancel_check and cancel_check():
         raise RuntimeError("Cancelled")
 
     # 2. PCHIP Upsampling (skipped if actual_pchip_factor == 1)
     if actual_pchip_factor > 1:
-        upsampled_sig, new_fs = upsample_pchip(cleaned_sig, fs, factor=actual_pchip_factor)
+        upsampled_sig, new_fs = upsample_pchip(cleaned_sig, fs, factor=actual_pchip_factor, config=config)
         del cleaned_sig
         import gc
 
@@ -530,7 +622,7 @@ def process_signal_pipeline(
         raise RuntimeError("Cancelled")
 
     # 3. Bandpass filtering at HIGH frequency (new_fs)
-    filtered_sig = bandpass_filter(upsampled_sig, lowcut, highcut, new_fs)
+    filtered_sig = bandpass_filter(upsampled_sig, lowcut, highcut, new_fs, config=config)
     del upsampled_sig
     import gc
 
@@ -545,7 +637,14 @@ def process_signal_pipeline(
 
     # 4. Compute CWT at HIGH frequency (perfect phase detail)
     img_data = compute_cwt_spectrogram(
-        filtered_sig, new_fs, lowcut, highcut, nv=actual_nv, use_ssq=should_use_ssq, cancel_check=cancel_check
+        filtered_sig,
+        new_fs,
+        lowcut,
+        highcut,
+        nv=actual_nv,
+        use_ssq=should_use_ssq,
+        cancel_check=cancel_check,
+        config=config,
     )
     del filtered_sig
     import gc
