@@ -382,11 +382,32 @@ class SpectralTab(QWidget):
                 continue
 
             for i, v in enumerate(pol_data):
+                period_str = f"{v['period']:6.1f} s"
+                phase_str = f"{v['phase_deg']:6.1f}\u00b0"
+                coh_val = v.get("mean_coherence", 1.0)
+                coh_str = f"{coh_val:4.2f}"
+
+                is_valid = v.get("is_valid", True)
+                dt_val = v.get("dt", 0.0)
+                vel_val = v.get("velocity", 0.0)
+                reason = v.get("gating_reason", "")
+
+                if not is_valid:
+                    vel_str = f"N/A ({reason})" if reason else "N/A (invalid)"
+                    dt_str = f"{dt_val:6.1f} s" if np.isfinite(dt_val) else "  N/A "
+                elif not np.isfinite(vel_val) or abs(vel_val) > 5000.0:
+                    vel_str = "N/A (in-phase, dt ≈ 0)"
+                    dt_str = f"{dt_val:6.1f} s" if np.isfinite(dt_val) else "  N/A "
+                else:
+                    vel_str = f"{vel_val:7.1f} m/s"
+                    dt_str = f"{dt_val:6.1f} s"
+
                 lines.append(
-                    f"  Peak {i + 1}: Period = {v['period']:7.1f} s | "
-                    f"Phase = {v['phase_deg']:7.1f}\u00b0 | "
-                    f"dt = {v['dt']:7.1f} s | "
-                    f"Velocity = {v['velocity']:7.1f} m/s"
+                    f"  Peak {i + 1}: Period = {period_str} | "
+                    f"Coh = {coh_str} | "
+                    f"Phase = {phase_str} | "
+                    f"dt = {dt_str} | "
+                    f"Velocity = {vel_str}"
                 )
 
         return "\n".join(lines)

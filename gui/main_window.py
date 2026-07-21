@@ -454,11 +454,10 @@ class Uran4App(QMainWindow):
             while current_day < pm6_end_dt:
                 sec_offset = (current_day - self.pm6_start_dt).total_seconds()
                 date_label = current_day.strftime("%Y-%m-%d")
-                index_offset = np.searchsorted(df_pm6_original_time, sec_offset)
 
                 for p in [main_tab.p1, main_tab.p2, main_tab.p3]:
                     day_line = pg.InfiniteLine(
-                        pos=index_offset,
+                        pos=sec_offset,
                         angle=90,
                         pen=pg.mkPen(100, 200, 255, 150, style=Qt.PenStyle.DashLine),
                         label=date_label,
@@ -500,8 +499,9 @@ class Uran4App(QMainWindow):
                 s_idx = s["start"]
                 e_idx = s["end"]
 
-                s_sec = s_idx
-                e_sec = e_idx
+                # Convert stored row indices back to seconds (the x-axis coordinate system)
+                s_sec = float(df_pm6_original_time[s_idx]) if s_idx < len(df_pm6_original_time) else float(s_idx)
+                e_sec = float(df_pm6_original_time[min(e_idx, len(df_pm6_original_time) - 1)])
 
                 if s_idx < e_idx and s_idx < len(self.df_pm6) and (e_idx - s_idx) > 300:
                     df_slice = self.df_pm6.iloc[s_idx:e_idx].copy()

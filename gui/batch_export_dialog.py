@@ -500,50 +500,61 @@ class BatchExportWorker(QThread):
 
                             for ax in axes:
                                 if target == "Full Overview":
+                                    df_pm6_original_time = (
+                                        (self.df_pm6["Datetime"] - self.start_datetime).dt.total_seconds().values
+                                    )
                                     if self.graphs_config.get("markers", False):
                                         for ms in self.all_sessions:
                                             if ms["target"] != "Full Overview":
-                                                s_h = ms["start"] / 3600.0
-                                                e_h = ms["end"] / 3600.0
-                                                mid_h = (s_h + e_h) / 2.0
-                                                y_min, y_max = ax.get_ylim()
-                                                # Determine face alpha based on whether it is a spectrogram
-                                                is_spec = "spectrogram" in ax.get_title().lower()
-                                                face_alpha = 0.25 if is_spec else 0.15
-                                                # Draw red shaded region with strong borders
-                                                ax.axvspan(
-                                                    s_h,
-                                                    e_h,
-                                                    facecolor=(1.0, 0.0, 0.0, face_alpha),
-                                                    edgecolor=(1.0, 0.0, 0.0, 0.8),
-                                                    linewidth=1.5,
-                                                    linestyle="--",
-                                                )
+                                                s_idx = int(ms["start"])
+                                                e_idx = int(ms["end"])
+                                                if (
+                                                    0 <= s_idx < len(df_pm6_original_time)
+                                                    and 0 <= e_idx <= len(df_pm6_original_time)
+                                                    and s_idx < e_idx
+                                                ):
+                                                    s_sec = float(df_pm6_original_time[s_idx])
+                                                    e_sec = float(
+                                                        df_pm6_original_time[min(e_idx, len(df_pm6_original_time) - 1)]
+                                                    )
+                                                    s_h = s_sec / 3600.0
+                                                    e_h = e_sec / 3600.0
+                                                    mid_h = (s_h + e_h) / 2.0
+                                                    y_min, y_max = ax.get_ylim()
+                                                    # Determine face alpha based on whether it is a spectrogram
+                                                    is_spec = "spectrogram" in ax.get_title().lower()
+                                                    face_alpha = 0.25 if is_spec else 0.15
+                                                    # Draw red shaded region with strong borders
+                                                    ax.axvspan(
+                                                        s_h,
+                                                        e_h,
+                                                        facecolor=(1.0, 0.0, 0.0, face_alpha),
+                                                        edgecolor=(1.0, 0.0, 0.0, 0.8),
+                                                        linewidth=1.5,
+                                                        linestyle="--",
+                                                    )
 
-                                                # Draw text vertically in the middle, using a white
-                                                # background box so it doesn't blend with spectrogram
-                                                ax.text(
-                                                    mid_h,
-                                                    y_min + (y_max - y_min) * 0.5,
-                                                    ms["target"],
-                                                    rotation=90,
-                                                    va="center",
-                                                    ha="center",
-                                                    color="#FF4444",
-                                                    alpha=1.0,
-                                                    fontweight="bold",
-                                                    bbox=dict(
-                                                        facecolor="white",
-                                                        alpha=0.7,
-                                                        edgecolor="none",
-                                                        boxstyle="round,pad=0.2",
-                                                    ),
-                                                )
+                                                    # Draw text vertically in the middle, using a white
+                                                    # background box so it doesn't blend with spectrogram
+                                                    ax.text(
+                                                        mid_h,
+                                                        y_min + (y_max - y_min) * 0.5,
+                                                        ms["target"],
+                                                        rotation=90,
+                                                        va="center",
+                                                        ha="center",
+                                                        color="#FF4444",
+                                                        alpha=1.0,
+                                                        fontweight="bold",
+                                                        bbox=dict(
+                                                            facecolor="white",
+                                                            alpha=0.7,
+                                                            edgecolor="none",
+                                                            boxstyle="round,pad=0.2",
+                                                        ),
+                                                    )
 
                                     if self.graphs_config.get("day_markers", False):
-                                        df_pm6_original_time = (
-                                            (self.df_pm6["Datetime"] - self.start_datetime).dt.total_seconds().values
-                                        )
                                         current_day = self.start_datetime.normalize() + pd.Timedelta(days=1)
                                         pm6_end_dt = self.df_pm6["Datetime"].iloc[-1]
                                         while current_day < pm6_end_dt:
