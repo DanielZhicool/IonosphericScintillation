@@ -36,7 +36,7 @@ CWT_SHOW_LINEAR_AMP = True  # True to show linear wavelet amplitude on colorbar,
 # Spectral-Correlation Analysis (MTM PSD, F-Test, Cross-Spectrum, IDVE)
 MTM_N_TAPERS = 7  # Number of DPSS tapers (Thomson Multitaper)
 MTM_NW = 4.0  # Time-bandwidth product for DPSS windows
-FTEST_CONFIDENCE = 0.95  # F-test significance level
+FTEST_CONFIDENCE = 0.99  # F-test significance level (99%)
 FDR_ALPHA = 0.05  # False Discovery Rate threshold for multiple testing
 CROSS_SPECTRUM_DX = 2500  # Beam separation in meters (model parameter)
 VELOCITY_N_PEAKS = 3  # Number of cross-spectral peaks to report

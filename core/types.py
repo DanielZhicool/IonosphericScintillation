@@ -47,6 +47,11 @@ class VelocityEstimate:
         """Enable dict-like indexing v['velocity'] for backward compatibility."""
         return self.to_dict()[key]
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Enable dict-like get() for backward compatibility."""
+        d = self.to_dict()
+        return d.get(key, default)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for backward compatibility with GUI/export components."""
         return {

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+title: "IonosphericScintillation: Signal Processing and Time-Frequency Analysis Suite for URAN-4 Data"
+abstract: "A high-precision scientific analysis suite for multi-station URAN-4 radio telescope observations, providing multitaper power spectral density estimation, Thomson F-test harmonic detection, weighted linear phase slope velocity regression, coherence gating, and continuous/synchrosqueezed wavelet spectrograms."
+version: 1.0.0
+date-released: 2026-07-27
+license: BSD-3-Clause
+repository-code: "https://github.com/DanielZhicool/IonosphericScintillation"
+keywords:
+  - ionospheric scintillation
+  - radio astronomy
+  - URAN-4
+  - multitaper spectral estimation
+  - time-frequency analysis
+  - wavelet transform
+  - solar wind velocity
+authors:
+  - family-names: "Zhykul"
+    given-names: "Danylo"
+    orcid: "https://orcid.org/0009-0003-8023-2839" 

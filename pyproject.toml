@@ -1,6 +1,6 @@
 [project]
 name = "ionosphericscintillation"
-version = "0.1.0"
+version = "1.0.0"
 description = "Signal processing and time-frequency analysis suite for URAN-4 ionospheric scintillation data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,7 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
+ignore = ["E501"]  # Line length is handled by ruff format
 select = [
     "B",   # flake8-bugbear
     "E",   # pycodestyle errors

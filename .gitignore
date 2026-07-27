@@ -34,6 +34,10 @@ test_results/
 todo.md
 PRESENTATION_NOTES.md
 
+# Zip archives & distribution bundles
+*.zip
+
 # Scratch & temporary files
 scratch/
 review.md
+review1.md

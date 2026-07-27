@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
-from scipy.signal import detrend, find_peaks
+from scipy.signal import detrend, find_peaks, savgol_filter
 from scipy.signal.windows import dpss
 from scipy.stats import f as f_dist
 
@@ -401,18 +401,33 @@ def find_spectral_peaks(
         n_peaks = config.velocity_n_peaks if config is not None else cfg.VELOCITY_N_PEAKS
 
     band_mask = (freqs >= lowcut_hz) & (freqs <= highcut_hz)
+    n_pts = np.sum(band_mask)
+    if n_pts == 0:
+        return np.array([], dtype=int)
 
     masked_power = np.zeros_like(power)
     masked_power[band_mask] = power[band_mask]
 
-    peaks, _ = find_peaks(masked_power, distance=3)
+    # Apply Savitzky-Golay smoothing if array is long enough to prevent raw FFT noise bin clustering
+    if n_pts >= 31:
+        smooth_power = np.zeros_like(power)
+        smooth_power[band_mask] = savgol_filter(power[band_mask], window_length=31, polyorder=3)
+        eval_power = smooth_power
+    else:
+        eval_power = masked_power
+
+    min_dist = max(5, n_pts // 20)
+    peaks, _ = find_peaks(eval_power[band_mask], distance=min_dist, prominence=0.01 * np.max(eval_power[band_mask]))
+
+    valid_indices = np.where(band_mask)[0]
 
     if len(peaks) == 0:
-        return np.array([], dtype=int)
+        sorted_idx = np.argsort(eval_power[valid_indices])[::-1]
+        return valid_indices[sorted_idx[:n_peaks]]
 
-    # Sort by power descending, return top N
-    sorted_idx = np.argsort(masked_power[peaks])[::-1]
-    return peaks[sorted_idx[:n_peaks]]
+    peak_global_indices = valid_indices[peaks]
+    sorted_idx = np.argsort(eval_power[peak_global_indices])[::-1]
+    return peak_global_indices[sorted_idx[:n_peaks]]
 
 
 def estimate_velocities(

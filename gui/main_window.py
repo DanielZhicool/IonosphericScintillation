@@ -420,7 +420,7 @@ class Uran4App(QMainWindow):
                 e_idx = np.searchsorted(df_pm6_original_time, row["End_sec"])
                 if s_idx < e_idx:
                     for col in CHANNELS:
-                        self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, s_idx, e_idx)
+                        self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, s_idx, e_idx, seed=42)
 
             main_tab = self.tabs.widget(0)
             if not isinstance(main_tab, SignalTab):
@@ -675,7 +675,7 @@ class Uran4App(QMainWindow):
 
             # Apply to global df_pm6
             for col in CHANNELS:
-                self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, global_s_idx, global_e_idx)
+                self.df_pm6[col] = fill_gap_with_red_noise(self.df_pm6[col].values, global_s_idx, global_e_idx, seed=42)
 
             # Propagate to all overlapping tabs
             for tab in self.get_all_signal_tabs():
