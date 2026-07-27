@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 from scipy.signal import find_peaks
 
+import core.config as cfg
 from core.spectral_analysis import format_velocity_table
 from gui.constants import (
     SPECTRAL_BAND_LARGE,
@@ -193,7 +194,12 @@ class SpectralTab(QWidget):
             ("25 MHz Pol B", 1, 1),
         ]
         threshold = data_dict.get("threshold", 1.0)
-        confidence_pct = data_dict.get("confidence", 0.99) * 100
+        confidence_val = data_dict.get("confidence", cfg.FTEST_CONFIDENCE)
+        fdr_adjusted = data_dict.get("fdr_adjusted", False)
+        confidence_pct = confidence_val * 100
+
+        conf_str = f"{confidence_pct:.2f}% (FDR Adjusted)" if fdr_adjusted else f"{confidence_pct:g}%"
+
         link_plot = None
 
         for ch_name, row, col in channels:
@@ -239,7 +245,7 @@ class SpectralTab(QWidget):
             p.addItem(thresh_line)
             thresh_html = (
                 f"<div style='font-size: 11pt; font-weight: bold; color: #FF4444;'>"
-                f"{confidence_pct:.0f}% Confidence Threshold (F={threshold:.2f})</div>"
+                f"{conf_str} Confidence Threshold (F={threshold:.2f})</div>"
             )
             thresh_label = pg.TextItem(html=thresh_html, anchor=(0, 1))
             thresh_label.setPos(p_min + (p_max - p_min) * 0.02, threshold)

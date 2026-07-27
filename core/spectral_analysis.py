@@ -648,13 +648,28 @@ def run_spectral_pipeline(
     # 3. F-test for each channel
     ftest_results: dict[str, Any] = {}
     threshold = None
+    fdr_adjusted = False
+    nom_conf = config.ftest_confidence if config is not None else cfg.FTEST_CONFIDENCE
+    n_t = config.mtm_n_tapers if config is not None else cfg.MTM_N_TAPERS
+    d1, d2 = 2, 2 * n_t - 2
+    raw_thresh = float(f_dist.ppf(nom_conf, d1, d2))
+    eff_conf = nom_conf
+
+    max_thresh = raw_thresh
     for ch_name, sig in filtered.items():
         _, fstat, thresh, T0 = compute_ftest(sig, new_fs, lowcut=lowcut, highcut=highcut, config=config)
         ftest_results[ch_name] = fstat
         ftest_results[ch_name + "_T0"] = T0
-        threshold = thresh
+        if thresh > max_thresh:
+            max_thresh = thresh
+
+    threshold = max_thresh
+    fdr_adjusted = threshold > raw_thresh + 1e-4
+    eff_conf = float(f_dist.cdf(threshold, d1, d2)) if fdr_adjusted else nom_conf
+
     ftest_results["threshold"] = threshold
-    ftest_results["confidence"] = config.ftest_confidence if config is not None else cfg.FTEST_CONFIDENCE
+    ftest_results["confidence"] = eff_conf
+    ftest_results["fdr_adjusted"] = fdr_adjusted
 
     if progress_callback:
         progress_callback(75)
@@ -762,7 +777,7 @@ def format_velocity_table(velocities: dict[str, Any] | Any, band_label: str) -> 
                 f"Phase = {phase_str} | "
                 f"dt = {dt_str} | "
                 f"Velocity = {vel_str} | "
-                f"Coh = {coh_str}"
+                f"Coherence = {coh_str}"
             )
 
     return "\n".join(lines)

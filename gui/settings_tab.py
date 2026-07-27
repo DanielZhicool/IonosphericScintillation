@@ -36,7 +36,7 @@ _BUILTIN_PRESETS = {
         "CWT_DYNAMIC_RANGE_DB": 40.0,
         "MTM_N_TAPERS": 7,
         "MTM_NW": 4.0,
-        "FTEST_CONFIDENCE": 0.95,
+        "FTEST_CONFIDENCE": 0.99,
         "CROSS_SPECTRUM_DX": 2500.0,
         "VELOCITY_N_PEAKS": 3,
         "PCHIP_FACTOR": 3,

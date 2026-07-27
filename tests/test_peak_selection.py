@@ -61,5 +61,5 @@ def test_velocity_table_formatting_in_phase():
     assert "[Pol A (20 MHz vs 25 MHz)]" in formatted_txt
     assert "Peak 1: Period =  10.0 s" in formatted_txt
     assert ">10,000 m/s (in-phase)" in formatted_txt
-    assert "Coh = 0.98" in formatted_txt
+    assert "Coherence = 0.98" in formatted_txt
     assert "(low coh)" in formatted_txt

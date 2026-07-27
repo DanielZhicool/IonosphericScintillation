@@ -246,12 +246,15 @@ class BatchExportWorker(QThread):
                                     vals = res["ftest"][ch_name][mask][::-1]
                                     ax.plot(periods, vals, color="#42A5F5", linewidth=0.8)
                                     ax.axhline(threshold, color="r", linestyle="--", alpha=0.7)
-                                    conf_pct = res["ftest"].get("confidence", 0.99) * 100
+                                    conf_val = res["ftest"].get("confidence", cfg.FTEST_CONFIDENCE)
+                                    fdr_adj = res["ftest"].get("fdr_adjusted", False)
+                                    conf_pct = conf_val * 100
+                                    conf_str = f"{conf_pct:.2f}% (FDR Adjusted)" if fdr_adj else f"{conf_pct:g}%"
                                     p_min, p_max = min(periods), max(periods)
                                     ax.text(
                                         p_min + (p_max - p_min) * 0.02,
                                         threshold,
-                                        f"{conf_pct:.0f}% Confidence Threshold (F={threshold:.2f})",
+                                        f"{conf_str} Confidence Threshold (F={threshold:.2f})",
                                         color="r",
                                         fontweight="bold",
                                         va="bottom",
@@ -466,7 +469,8 @@ class BatchExportWorker(QThread):
                             if "filtered" in time_plots:
                                 ax = axes[ax_idx]
                                 ax_idx += 1
-                                ax.plot(time_h, filtered_sig, color="seagreen", linewidth=0.6)
+                                if filtered_sig is not None:
+                                    ax.plot(time_h, filtered_sig, color="seagreen", linewidth=0.6)
                                 ax.set_ylabel("Amplitude")
                                 ax.set_title(f"Filtered Signal (Scintillations, {band_key})")
                                 ax.grid(True, alpha=0.3)
@@ -475,31 +479,44 @@ class BatchExportWorker(QThread):
                                 ax = axes[ax_idx]
                                 ax_idx += 1
                                 t0, t1 = time_h[0], time_h[-1]
-                                if cfg.CWT_SHOW_PERIOD:
-                                    plot_img = img_data.T
-                                    y_min, y_max = 1.0 / cwt_high, 1.0 / cwt_low
-                                    y_label = "Period (Sec)"
-                                else:
-                                    plot_img = img_data[:, ::-1].T
-                                    y_min, y_max = cwt_low, cwt_high
-                                    y_label = "Frequency (Hz)"
+                                if img_data is not None:
+                                    if cfg.CWT_SHOW_PERIOD:
+                                        plot_img = img_data.T
+                                        y_min, y_max = 1.0 / cwt_high, 1.0 / cwt_low
+                                        y_label = "Period (Sec)"
+                                    else:
+                                        plot_img = img_data[:, ::-1].T
+                                        y_min, y_max = cwt_low, cwt_high
+                                        y_label = "Frequency (Hz)"
 
-                                cbar_label = "Wavelet Amplitude" if cfg.CWT_SHOW_LINEAR_AMP else "Power (dB)"
-                                vmax = (
-                                    np.nanpercentile(plot_img, 99.5) if cfg.CWT_SHOW_LINEAR_AMP else np.nanmax(plot_img)
-                                )
-                                im = ax.imshow(
-                                    plot_img,
-                                    aspect="auto",
-                                    origin="lower",
-                                    extent=[t0, t1, y_min, y_max],
-                                    cmap="viridis",
-                                    vmin=0.0 if cfg.CWT_SHOW_LINEAR_AMP else None,
-                                    vmax=vmax,
-                                )
-                                plt.colorbar(im, ax=ax, label=cbar_label)
-                                ax.set_ylabel(y_label)
-                                ax.set_title(f"CWT Spectrogram ({band_key})")
+                                    cbar_label = "Wavelet Amplitude" if cfg.CWT_SHOW_LINEAR_AMP else "Power (dB)"
+                                    vmax = (
+                                        np.nanpercentile(plot_img, 99.5)
+                                        if cfg.CWT_SHOW_LINEAR_AMP
+                                        else np.nanmax(plot_img)
+                                    )
+                                    im = ax.imshow(
+                                        plot_img,
+                                        aspect="auto",
+                                        origin="lower",
+                                        extent=[t0, t1, y_min, y_max],
+                                        cmap="viridis",
+                                        vmin=0.0 if cfg.CWT_SHOW_LINEAR_AMP else None,
+                                        vmax=vmax,
+                                    )
+                                    plt.colorbar(im, ax=ax, label=cbar_label)
+                                    ax.set_ylabel(y_label)
+                                    ax.set_title(f"CWT Spectrogram ({band_key})")
+                                else:
+                                    ax.text(
+                                        0.5,
+                                        0.5,
+                                        "Spectrogram Data Unavailable",
+                                        ha="center",
+                                        va="center",
+                                        transform=ax.transAxes,
+                                    )
+                                    ax.set_title(f"CWT Spectrogram ({band_key})")
 
                             for ax in axes:
                                 if target == "Full Overview":
@@ -649,7 +666,7 @@ class BatchExportDialog(QDialog):
         grp_sessions = QGroupBox("1. Select Sessions")
         v_sess = QVBoxLayout()
         self.list_sessions = QListWidget()
-        self.list_sessions.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.list_sessions.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
 
         self.session_map = {}
         for _idx, s in enumerate(self.sessions):
@@ -671,7 +688,7 @@ class BatchExportDialog(QDialog):
         grp_channels = QGroupBox("2. Select Channels")
         v_chan = QVBoxLayout()
         self.list_channels = QListWidget()
-        self.list_channels.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.list_channels.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         for ch in CHANNELS:
             self.list_channels.addItem(ch)
         self.list_channels.item(0).setSelected(True)  # Select first by default
