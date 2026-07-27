@@ -133,10 +133,12 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 ## Repository Structure
 
 ```text
+├── .github/workflows/          # CI/CD automated test and release workflows
 ├── core/                      # Core scientific algorithms and signal processing logic
 │   ├── config.py             # Default configuration and hyperparameters
 │   ├── parsers.py            # Parsers for raw binary PM6 data and REGI log files
-│   ├── signal_processing.py  # DSP filters (Hampel, Savitzky-Golay, red noise interpolation, CWT/SST)
+│   ├── provenance.py         # Reproducible scientific JSON audit manifest exporter
+│   ├── signal_processing.py  # DSP filters (Hampel, SavGol, red noise interpolation, CWT/SST)
 │   ├── spectral_analysis.py  # Thomson multitaper PSD, F-test, cross-spectral analysis & WLS IDVE
 │   ├── synthetic_generator.py # Synthetic scintillation signal and noise generator
 │   └── types.py              # Dataclass result containers (MultitaperPSDResult, VelocityEstimate, etc.)
@@ -144,6 +146,16 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 │   ├── assets/               # Documentation images and generated benchmark plots
 │   ├── benchmarks.md         # Hardware specifications, methodology, and performance benchmarks
 │   └── theory.md             # Scientific formulation, mathematical theory, and software defaults
+├── examples/                  # Interactive tutorial Jupyter Notebook series
+│   ├── 00_example_gallery.ipynb            # Gallery overview of all tutorial notebooks
+│   ├── 01_signal_generation.ipynb          # Colored noise, wave modes, and sub-sample delays
+│   ├── 02_preprocessing.ipynb              # Hampel filtering, SavGol smoothing, & gap synthesis
+│   ├── 03_wavelet_analysis.ipynb           # CWT vs. SST wavelet spectrograms
+│   ├── 04_multitaper_psd.ipynb             # Thomson Multitaper PSD, Jackknife CIs, & F-Test
+│   ├── 05_cross_spectrum_velocity.ipynb    # Cross-spectrum, phase unwrapping, & IDVE velocity
+│   ├── 06_validation_pipeline.ipynb        # Synthetic ground-truth validation suite
+│   ├── 07_complete_pipeline_validation.ipynb # End-to-end multi-band synthetic validation
+│   └── 08_real_uran4_observation.ipynb     # Complete workflow on real URAN-4 binary observations
 ├── gui/                      # Graphical User Interface built with PyQt/PySide
 │   ├── batch_export_dialog.py # Dialog for batch analysis and multi-format export
 │   ├── constants.py          # Color palettes, styling constants, and default UI parameters
@@ -154,20 +166,28 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 │   ├── tabs.py               # Tab management for daily sessions and astronomical sources
 │   └── workers.py            # Multithreaded Qt workers for non-blocking computations
 ├── images/                   # Screenshots and diagrams for UI documentation
-├── scripts/                  # Project utility and profiling scripts
-│   └── benchmark_scaling.py  # Benchmark scaling profile generator across signal lengths
+├── scripts/                  # Project utility, profiling, and packaging scripts
+│   ├── benchmark_scaling.py  # Benchmark scaling profile generator across signal lengths
+│   ├── create_examples.py    # Generator for interactive tutorial notebook suite
+│   └── package_exe.py        # PyInstaller standalone desktop application packager
 ├── tests/                    # Automated unit, integration, and benchmark test suite
 │   ├── test_benchmarks.py    # Performance benchmark test suite for pytest-benchmark
 │   ├── test_multitaper.py    # Unit tests for Multitaper PSD & DPSS tapers
 │   ├── test_parsers.py       # Unit tests for PM6 and REGI file parsing
 │   ├── test_pchip.py         # Unit tests for PCHIP interpolation
+│   ├── test_peak_selection.py# Unit tests for peak selection & velocity table formatting
 │   ├── test_preprocessing.py # Unit tests for Hampel, SavGol, & red noise gap filling
+│   ├── test_provenance.py   # Unit tests for scientific provenance manifest exporter
+│   ├── test_reproducibility.py # Tests for red-noise seed reproducibility & pipeline determinism
 │   ├── test_statistical_precision.py # Statistical tests for Jackknife CIs, FDR control, & WLS phase regression
 │   ├── test_synthetic.py     # End-to-end pipeline validation using synthetic data
 │   ├── test_validation.py    # Edge case & contract validation tests
 │   └── test_velocity.py     # Unit tests for velocity estimation & coherence gating
 ├── app.py                    # Application entry point
-├── example.ipynb             # Jupyter Notebook with API usage examples and algorithms
+├── CHANGELOG.md              # Project change history and release notes
+├── CITATION.cff              # Citation metadata file for academic indexing
+├── CONTRIBUTING.md           # Developer guidelines and contribution policy
+├── LICENSE                   # BSD 3-Clause open source software license
 ├── pyproject.toml            # Python project configuration and dependency specifications
 ├── Uran4Scintillation.spec   # PyInstaller spec file for packaging the application
 └── README.md                 # Project documentation and guide

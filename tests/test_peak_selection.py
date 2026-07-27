@@ -5,7 +5,7 @@ Unit tests for peak selection and IDVE velocity table formatting logic.
 import numpy as np
 from scipy.signal import find_peaks
 
-from gui.spectral_tab import SpectralTab
+from core.spectral_analysis import format_velocity_table
 
 
 def test_distinct_peak_selection_no_clustering():
@@ -56,7 +56,7 @@ def test_velocity_table_formatting_in_phase():
         ]
     }
 
-    formatted_txt = SpectralTab._format_velocity_table(mock_velocities, "Small (5-150 s)")
+    formatted_txt = format_velocity_table(mock_velocities, "Small (5-150 s)")
 
     assert "[Pol A (20 MHz vs 25 MHz)]" in formatted_txt
     assert "Peak 1: Period =  10.0 s" in formatted_txt

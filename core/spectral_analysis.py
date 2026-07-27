@@ -704,3 +704,65 @@ def run_spectral_pipeline(
         "lowcut": lowcut,
         "highcut": highcut,
     }
+
+
+def format_velocity_table(velocities: dict[str, Any] | Any, band_label: str) -> str:
+    """Render velocity estimates as a plain-text table matching reference format."""
+    lines = [
+        "Ionospheric Drift Velocity Estimation",
+        "Model: Line-of-sight transmission.  Beam separation (dx) = 2500 m",
+        f"Band: {band_label}",
+        "-" * 70,
+    ]
+
+    if not isinstance(velocities, dict):
+        lines.append("  No velocity data available.")
+        return "\n".join(lines)
+
+    for pol_name in ("Pol A", "Pol B"):
+        pol_data = velocities.get(pol_name, [])
+        lines.append(f"\n[{pol_name} (20 MHz vs 25 MHz)]")
+
+        if not pol_data:
+            lines.append("  No significant peaks found.")
+            continue
+
+        for i, v in enumerate(pol_data):
+            if hasattr(v, "to_dict"):
+                v = v.to_dict()
+            elif not isinstance(v, dict):
+                v = getattr(v, "__dict__", {})
+
+            period_val = v.get("period", 0.0)
+            phase_val = v.get("phase_deg", 0.0)
+            dt_val = v.get("dt", 0.0)
+            vel_val = v.get("velocity", 0.0)
+            coh_val = v.get("mean_coherence", 0.0)
+            is_valid = v.get("is_valid", True)
+            reason = v.get("gating_reason", "")
+
+            period_str = f"{period_val:5.1f} s"
+            phase_str = f"{phase_val:6.1f}\u00b0"
+            dt_str = f"{dt_val:6.2f} s" if np.isfinite(dt_val) else "  N/A "
+
+            if not np.isfinite(vel_val) or abs(vel_val) > 10000.0:
+                vel_str = ">10,000 m/s (in-phase)" if vel_val >= 0 else "<-10,000 m/s (in-phase)"
+            else:
+                vel_str = f"{vel_val:7.1f} m/s"
+
+            coh_str = f"{coh_val:4.2f}"
+            if not is_valid and reason:
+                if "coherence" in reason.lower() and "low coh" not in coh_str:
+                    coh_str += " (low coh)"
+                elif ("small" in reason.lower() or "in-phase" in reason.lower()) and "in-phase" not in vel_str:
+                    vel_str += " (in-phase)"
+
+            lines.append(
+                f"  Peak {i + 1}: Period = {period_str} | "
+                f"Phase = {phase_str} | "
+                f"dt = {dt_str} | "
+                f"Velocity = {vel_str} | "
+                f"Coh = {coh_str}"
+            )
+
+    return "\n".join(lines)
