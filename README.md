@@ -1,6 +1,13 @@
 # URAN-4 Ionospheric Scintillation Analyzer
 
+[![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Type Check: Mypy](https://img.shields.io/badge/type%20check-mypy-blue.svg)](https://mypy-lang.org/)
+[![Citation CFF](https://img.shields.io/badge/citation-CFF-green.svg)](CITATION.cff)
+
 A scientific software suite for the primary processing, filtering, and time-frequency analysis (spectroscopy) of radio astronomical signals from the **URAN-4 radio telescope**.
+
 
 Designed for processing and analyzing dual-frequency (20 MHz and 25 MHz) interferometric observations, this tool helps researchers isolate ionospheric scintillation scales, estimate ionospheric drift velocities, and perform high-resolution spectral analyses.
 
@@ -29,7 +36,7 @@ This suite integrates a range of digital signal processing (DSP) and statistical
 *   **Thomson Multitaper Power Spectral Density (PSD):** Uses Discrete Prolate Spheroidal Sequences (DPSS/Slepian tapers) to estimate a low-variance, low-bias power spectrum.
 *   **Jackknife 95% Confidence Intervals:** Calculates non-parametric Jackknife log-PSD standard errors across DPSS tapers to provide robust statistical confidence bounds.
 *   **Thomson F-Test with FDR Control:** A statistical test used to detect deterministic harmonic lines against a continuous background, incorporating Benjamini-Hochberg False Discovery Rate (FDR at $\alpha = 0.05$) control for multiple hypothesis testing.
-*   **Multitaper Cross-Spectral Analysis & Coherence Gating:** Calculates the co-spectrum, quadrature spectrum, and magnitude-squared coherence between 20 MHz and 25 MHz interferometric channels. Automatically gates velocity calculations when coherence $C_{xy} < 0.7$.
+*   **Multitaper Cross-Spectral Analysis & Coherence Gating:** Calculates the co-spectrum, quadrature spectrum, and magnitude-squared coherence between 20 MHz and 25 MHz interferometric channels. Calculated velocity, time delay, phase, and coherence are reported for all peaks, with `(low coh)` or `(in-phase)` tags added for low coherence or high-speed signals.
 *   **Weighted Linear Phase Regression IDVE:** Estimates propagation time delays $\tau$ and horizontal drift velocities $v$ using unwrapped Weighted Least Squares (WLS) phase slope regression ($\phi(f) = a f + b$) over high-coherence bands, propagating analytical 95% confidence intervals via the Delta method.
 
 ---
@@ -353,7 +360,7 @@ These parameters define the default values for the processing pipeline and can b
 | --- | --- | --- |
 | `MTM_N_TAPERS` | `7` | Number of DPSS tapers for the Thomson Multitaper method |
 | `MTM_NW` | `4.0` | Time-bandwidth product for DPSS windows |
-| `FTEST_CONFIDENCE` | `0.95` | F-test significance level |
+| `FTEST_CONFIDENCE` | `0.99` | F-test significance level (99% confidence threshold, F=6.93) |
 | `FDR_ALPHA` | `0.05` | False Discovery Rate threshold for Thomson F-test multiple testing control |
 | `CROSS_SPECTRUM_DX` | `2500` | Physical distance between telescope beams (metres) |
 | `VELOCITY_N_PEAKS` | `3` | Number of top cross-spectral peaks used for drift velocity estimation |
@@ -406,3 +413,50 @@ Users should be aware of the following physical and signal constraints when anal
 Performance of core DSP, spectral estimation, and wavelet transforms has been profiled using `pytest-benchmark` across standard observation epochs ($N = 2,000$ samples / $33.3\text{ min}$) and evaluated for runtime scaling up to $N = 506,069$ samples ($5.86\text{ days}$).
 
 For detailed hardware environment specs, empirical benchmark tables, scaling curves, and instructions for reproducing results, see [Performance Benchmarks](docs/benchmarks.md).
+
+---
+
+## Audit Provenance & Reproducibility
+
+To ensure complete scientific reproducibility, the suite provides a provenance tracking module (`core/provenance.py`). Each export generates a reproducible JSON audit manifest detailing:
+- Raw input file SHA-256 checksum and file size.
+- Exact application version (`1.0.0`) and git commit SHA hash.
+- Full snapshot of all pipeline processing parameters (`ProcessingConfig`).
+- Full system and library runtime environment versions (`numpy`, `scipy`, `pandas`, `ssqueezepy`, `pyside6`).
+- Parser repair logs and warning history.
+
+### Exporting Provenance Manifests
+From Python:
+```python
+from core.provenance import export_provenance_manifest
+from core.config import ProcessingConfig
+
+export_provenance_manifest(
+    output_path="results/audit_manifest.json",
+    input_file_path="data/04012013me.PM6",
+    config=ProcessingConfig(),
+)
+```
+
+---
+
+## Citation
+
+If you use this software suite in your scientific research or publications, please cite it as described in [`CITATION.cff`](CITATION.cff):
+
+```bibtex
+@software{Zhicool_IonosphericScintillation_2026,
+  author = {Zhicool, Daniel},
+  title = {IonosphericScintillation: Signal Processing and Time-Frequency Analysis Suite for URAN-4 Data},
+  version = {1.0.0},
+  year = {2026},
+  url = {https://github.com/DanielZhicool/IonosphericScintillation},
+  license = {BSD-3-Clause}
+}
+```
+
+---
+
+## License
+
+Distributed under the terms of the **[BSD 3-Clause License](LICENSE)**. See `LICENSE` for details.

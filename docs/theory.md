@@ -4,6 +4,23 @@ This document provides the mathematical foundations, underlying assumptions, mat
 
 ---
 
+## Interactive Educational Notebook Series
+
+Each theoretical formulation below is accompanied by a hands-on, executable Jupyter notebook in the [`examples/`](../examples/) directory mapping equations directly to working Python code:
+
+| Theory Section | Corresponding Interactive Jupyter Notebook | Primary Focus & Demonstration |
+| :--- | :--- | :--- |
+| **Section 2: Signal Generation** | [`examples/01_signal_generation.ipynb`](../examples/01_signal_generation.ipynb) | Kolmogorov colored noise, harmonic wave modes, and sub-sample Fourier phase shifting |
+| **Section 3: Signal Pre-processing** | [`examples/02_preprocessing.ipynb`](../examples/02_preprocessing.ipynb) | Rolling Hampel outlier filtering, Savitzky-Golay smoothing, and AR(1) red-noise gap synthesis |
+| **Wavelet Time-Frequency** | [`examples/03_wavelet_analysis.ipynb`](../examples/03_wavelet_analysis.ipynb) | Continuous Wavelet Transform (CWT) vs. Synchrosqueezed Wavelet Transform (SST) ridge sharpening |
+| **Section 4.1 & 4.2: Multitaper PSD** | [`examples/04_multitaper_psd.ipynb`](../examples/04_multitaper_psd.ipynb) | Thomson DPSS multitaper spectral estimation, Jackknife 95% CIs, and Thomson F-Test |
+| **Section 4.3 & 4.6: IDVE Velocity** | [`examples/05_cross_spectrum_velocity.ipynb`](../examples/05_cross_spectrum_velocity.ipynb) | Cross-power spectrum, phase unwrapping, magnitude coherence, and WLS drift velocity estimation |
+| **Synthetic Validation** | [`examples/06_validation_pipeline.ipynb`](../examples/06_validation_pipeline.ipynb) | Synthetic end-to-end pipeline recovery against ground truth parameters |
+| **Full Pipeline Suite** | [`examples/07_complete_pipeline_validation.ipynb`](../examples/07_complete_pipeline_validation.ipynb) | Complete pipeline suite validation |
+| **Real URAN-4 Workflow** | [`examples/08_real_uran4_observation.ipynb`](../examples/08_real_uran4_observation.ipynb) | End-to-end processing workflow on authentic URAN-4 radio telescope `.PM6` recordings |
+
+---
+
 ## 1. Common Mathematical Notation
 
 The following table lists the mathematical symbols, physical variables, and software parameters used throughout this document.
@@ -49,6 +66,8 @@ $$PSD(f) = \frac{A_0}{\left[1 + \left(\frac{f}{f_F}\right)^2\right]^{p/2}}$$
 - **Defaults:** Fresnel frequency $f_F = 0.1\text{ Hz}$, spectral index $p = 8/3 \approx 2.67$ (Kolmogorov turbulence value).
 - **Normalization:** Output noise array is normalized to zero mean ($\mu = 0$) and unit variance ($\sigma^2 = 1.0$).
 
+> 📖 **Interactive Notebook Tutorial:** See [`examples/01_signal_generation.ipynb`](../examples/01_signal_generation.ipynb) for a hands-on demonstration of power-law noise generation and frequency-domain phase shifts.
+
 ---
 
 ### 2.2. Fractional Delay in the Frequency Domain
@@ -64,6 +83,8 @@ $$Y(f) = X(f) \cdot e^{-j 2\pi f \tau}$$
 - **Function:** `core.synthetic_generator.apply_delay()`
 - **Algorithm:** Calculates complex transfer function $H(f) = \exp(-2\pi j f \tau)$ for non-negative frequencies from `np.fft.rfftfreq()`, multiplies $X(f)$ by $H(f)$, and transforms back via `np.fft.irfft()`.
 - **Units & Sign:** Delay parameter $\tau$ is in seconds (positive value = time delay / right shift).
+
+> 📖 **Interactive Notebook Tutorial:** See [`examples/01_signal_generation.ipynb`](../examples/01_signal_generation.ipynb) for an executable demonstration of Fourier sub-sample fractional delay synthesis.
 
 ---
 
@@ -88,9 +109,11 @@ $$\text{MAD}_i = 1.4826 \cdot \text{median}(|x_{i-K} - m_i|, \ldots, |x_{i+K} - 
 - **Normal Consistency:** The scaling factor $1.4826$ correctly maps the median absolute deviation of a normal distribution to its standard deviation ($\sigma \approx 1.4826 \cdot \text{MAD}$).
 
 #### Implementation & Software Defaults:
-- **Function:** `core.signal_processing.hampel_filter()`
+- **Function:** `core.signal_processing.clean_and_smooth_signal()`
 - **Defaults:** Window size parameter `window_size` defaults to $15$ ($K = 15$, yielding a full window width $2K+1 = 31$ samples), threshold `n_sigmas` defaults to $3.0$.
 - **Boundary Handling:** Edge samples are padded using reflecting boundary conditions to preserve array shape without boundary artifacts.
+
+> 📖 **Interactive Notebook Tutorial:** See [`examples/02_preprocessing.ipynb`](../examples/02_preprocessing.ipynb) for a step-by-step notebook demonstration of Hampel outlier filtering and Savitzky-Golay smoothing.
 
 ---
 
@@ -108,6 +131,8 @@ where $C_m$ are polynomial least-squares fitting coefficients.
 #### Implementation & Software Defaults:
 - **Function:** `core.signal_processing.clean_and_smooth_signal()` (calls `scipy.signal.savgol_filter`)
 - **Defaults:** Polynomial degree $d = 2$. Window length parameter uses the same window width as the Hampel stage ($2M+1 = 31$ samples by default).
+
+> 📖 **Interactive Notebook Tutorial:** See [`examples/02_preprocessing.ipynb`](../examples/02_preprocessing.ipynb) for a notebook walkthrough of Savitzky-Golay polynomial smoothing and AR(1) red-noise gap synthesis.
 
 ---
 
@@ -128,6 +153,8 @@ $$\hat{S}(f) = \frac{1}{K} \sum_{k=0}^{K-1} \lambda_k \cdot \left| \sum_{n=0}^{N
 - **Library & Algorithm:** Uses `scipy.signal.windows.dpss` for orthogonal DPSS taper sequences $h_{n,k}$ and `numpy.fft.rfft` for 1D real-to-complex Discrete Fourier Transforms.
 - **Defaults:** Time-halfbandwidth product $NW = 4.0$, number of tapers $K = 7$ (derived from $K \le 2NW - 1$).
 - **Pre-processing:** Detrending (`scipy.signal.detrend`) is applied automatically prior to taper multiplication.
+
+> 📖 **Interactive Notebook Tutorial:** See [`examples/04_multitaper_psd.ipynb`](../examples/04_multitaper_psd.ipynb) for a hands-on comparison of standard FFT vs. Thomson Multitaper PSD estimation and Jackknife 95% CIs.
 
 ---
 
@@ -151,7 +178,9 @@ $$\mu(f) = \frac{\sum_{k=0}^{K-1} H_k(0) \cdot Y_k(f)}{\sum_{k=0}^{K-1} |H_k(0)|
 #### Implementation & Software Defaults:
 - **Function:** `core.spectral_analysis.compute_thomson_ftest()`
 - **Critical Threshold:** Critical value $F_{\text{crit}}$ is evaluated using `scipy.stats.f.ppf(1 - alpha, df1=2, df2=2*K - 2)`.
-- **Defaults:** Significance level $\alpha = 0.05$ ($95\%$ statistical confidence threshold), using $K = 7$ tapers ($df_1 = 2$, $df_2 = 12$).
+- **Defaults:** Significance level $\alpha = 0.01$ ($99\%$ statistical confidence threshold, $F_{\text{crit}} = 6.93$), using $K = 7$ tapers ($df_1 = 2$, $df_2 = 12$).
+
+> 📖 **Interactive Notebook Tutorial:** See [`examples/04_multitaper_psd.ipynb`](../examples/04_multitaper_psd.ipynb) for a notebook demonstration of Thomson F-Test line detection and FDR multiple testing correction.
 
 ---
 
@@ -174,6 +203,8 @@ $$v = \text{sign}(\tau) \frac{dx}{|\tau|}$$
 - **Phase Representation:** Phase $\theta(f)$ is computed in degrees via `np.degrees(np.angle(S12))`.
 - **Defaults:** Baseline distance $dx$ defaults to $2500.0\text{ m}$ (URAN-4 receiver configuration).
 
+> 📖 **Interactive Notebook Tutorial:** See [`examples/05_cross_spectrum_velocity.ipynb`](../examples/05_cross_spectrum_velocity.ipynb) for a step-by-step notebook tutorial on cross-spectral phase unwrapping, magnitude coherence, and IDVE velocity calculation.
+
 ---
 
 ### 4.4. Jackknife 95% Confidence Intervals for Multitaper PSD
@@ -193,6 +224,8 @@ $$\text{CI}_{95\%}(f) = \left[ \hat{S}(f) \cdot e^{-1.96 \cdot \text{SE}(f)}, \;
 - **Function:** `core.spectral_analysis.compute_multitaper_psd()`
 - **Result Container:** Returns `MultitaperPSDResult` holding `psd`, `log_psd_se`, `ci95_low`, and `ci95_high`.
 
+> 📖 **Interactive Notebook Tutorial:** See [`examples/04_multitaper_psd.ipynb`](../examples/04_multitaper_psd.ipynb) for a notebook demonstration of non-parametric Jackknife log-PSD confidence bounds.
+
 ---
 
 ### 4.5. Multiple Testing Correction (Benjamini-Hochberg FDR)
@@ -210,6 +243,8 @@ The effective critical F-statistic threshold $F_{\text{FDR}}$ is then computed f
 - **Function:** `core.spectral_analysis.compute_ftest()`
 - **Defaults:** `fdr_alpha` defaults to $0.05$.
 
+> 📖 **Interactive Notebook Tutorial:** See [`examples/04_multitaper_psd.ipynb`](../examples/04_multitaper_psd.ipynb) for a notebook walkthrough of Benjamini-Hochberg FDR multiple testing correction on Thomson F-test results.
+
 ---
 
 ### 4.6. Weighted Linear Phase Regression & Coherence Gating
@@ -225,12 +260,14 @@ Analytical 95% confidence intervals for $\tau$ and $v$ are propagated from the s
 
 $$\text{SE}(\tau) = \frac{\text{SE}(a)}{2\pi}, \quad \text{SE}(v) = \left|\frac{dx}{\tau^2}\right| \cdot \text{SE}(\tau)$$
 
-If mean coherence across the peak region falls below $C_{\text{min}} = 0.7$, the velocity estimate is marked invalid (`is_valid = False`).
+To preserve complete observational transparency, calculated values for $v$, $\tau$, $\phi$, and coherence are always reported. If mean coherence falls below $C_{\text{min}} = 0.7$ or velocity exceeds physical thresholds ($>10,000\text{ m/s}$), informative tags (`(low coh)`, `(in-phase)`) are appended directly to the output metrics.
 
 #### Implementation & Software Defaults:
 - **Function:** `core.spectral_analysis.estimate_velocities()`
 - **Result Container:** Returns a list of `VelocityEstimate` dataclass instances.
 - **Defaults:** `coherence_threshold` defaults to $0.7$; `enable_phase_regression` defaults to `False` (single-point peak phase default).
+
+> 📖 **Interactive Notebook Tutorial:** See [`examples/05_cross_spectrum_velocity.ipynb`](../examples/05_cross_spectrum_velocity.ipynb) for a notebook tutorial on WLS phase slope regression and analytical confidence bound propagation.
 
 ---
 
