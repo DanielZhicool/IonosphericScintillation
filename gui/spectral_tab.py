@@ -168,7 +168,7 @@ class SpectralTab(QWidget):
             vals = 10.0 * np.log10(np.maximum(vals_linear, 1e-30))
             p.plot(periods, vals, pen=pg.mkPen("#42A5F5", width=1.0))  # uniform blue
 
-            peaks, _ = find_peaks(vals, distance=max(1, len(vals) // 50))
+            peaks, _ = find_peaks(vals, distance=max(1, len(vals) // 200), prominence=0.01 * np.max(vals))
             if len(peaks) > 0:
                 top_idx = sorted(peaks, key=lambda i: vals[i], reverse=True)[:5]
                 top_periods = sorted([periods[i] for i in top_idx], reverse=True)
@@ -192,7 +192,7 @@ class SpectralTab(QWidget):
             ("25 MHz Pol B", 1, 1),
         ]
         threshold = data_dict.get("threshold", 1.0)
-        confidence_pct = data_dict.get("confidence", 0.95) * 100
+        confidence_pct = data_dict.get("confidence", 0.99) * 100
         link_plot = None
 
         for ch_name, row, col in channels:
@@ -333,8 +333,9 @@ class SpectralTab(QWidget):
             p_re.plot(periods, vals_re, pen=pg.mkPen("#42A5F5", width=1.5))  # Blue
             p_im.plot(periods, vals_im, pen=pg.mkPen("#EF5350", width=1.5))  # Red
 
-            # Peak detection (Top-3 for Cross Spectrum)
-            peaks, _ = find_peaks(vals_pow, distance=max(1, len(vals_pow) // 50))
+            # Direct peak detection (Top-3 tallest distinct peaks for Cross Spectrum)
+            dist = max(1, len(vals_pow) // 50)
+            peaks, _ = find_peaks(vals_pow, distance=dist, prominence=0.01 * np.max(vals_pow))
             if len(peaks) > 0:
                 top_indices = sorted(peaks, key=lambda i: vals_pow[i], reverse=True)[:3]
                 top_periods = [periods[i] for i in top_indices]
@@ -365,13 +366,17 @@ class SpectralTab(QWidget):
 
     @staticmethod
     def _format_velocity_table(velocities, band_label):
-        """Render velocity estimates as a plain-text table."""
+        """Render velocity estimates as a plain-text table matching reference format."""
         lines = [
             SPECTRAL_TAB_VELOCITY_HEADER,
             "Model: Line-of-sight transmission.  Beam separation (dx) = 2500 m",
             f"Band: {band_label}",
             "-" * 70,
         ]
+
+        if not isinstance(velocities, dict):
+            lines.append("  No velocity data available.")
+            return "\n".join(lines)
 
         for pol_name in ("Pol A", "Pol B"):
             pol_data = velocities.get(pol_name, [])
@@ -382,32 +387,41 @@ class SpectralTab(QWidget):
                 continue
 
             for i, v in enumerate(pol_data):
-                period_str = f"{v['period']:6.1f} s"
-                phase_str = f"{v['phase_deg']:6.1f}\u00b0"
-                coh_val = v.get("mean_coherence", 1.0)
-                coh_str = f"{coh_val:4.2f}"
+                if hasattr(v, "to_dict"):
+                    v = v.to_dict()
+                elif not isinstance(v, dict):
+                    v = getattr(v, "__dict__", {})
 
-                is_valid = v.get("is_valid", True)
+                period_val = v.get("period", 0.0)
+                phase_val = v.get("phase_deg", 0.0)
                 dt_val = v.get("dt", 0.0)
                 vel_val = v.get("velocity", 0.0)
+                coh_val = v.get("mean_coherence", 0.0)
+                is_valid = v.get("is_valid", True)
                 reason = v.get("gating_reason", "")
 
-                if not is_valid:
-                    vel_str = f"N/A ({reason})" if reason else "N/A (invalid)"
-                    dt_str = f"{dt_val:6.1f} s" if np.isfinite(dt_val) else "  N/A "
-                elif not np.isfinite(vel_val) or abs(vel_val) > 5000.0:
-                    vel_str = "N/A (in-phase, dt ≈ 0)"
-                    dt_str = f"{dt_val:6.1f} s" if np.isfinite(dt_val) else "  N/A "
+                period_str = f"{period_val:5.1f} s"
+                phase_str = f"{phase_val:6.1f}\u00b0"
+                dt_str = f"{dt_val:6.2f} s" if np.isfinite(dt_val) else "  N/A "
+
+                if not np.isfinite(vel_val) or abs(vel_val) > 10000.0:
+                    vel_str = ">10,000 m/s (in-phase)" if vel_val >= 0 else "<-10,000 m/s (in-phase)"
                 else:
                     vel_str = f"{vel_val:7.1f} m/s"
-                    dt_str = f"{dt_val:6.1f} s"
+
+                coh_str = f"{coh_val:4.2f}"
+                if not is_valid and reason:
+                    if "coherence" in reason.lower() and "low coh" not in coh_str:
+                        coh_str += " (low coh)"
+                    elif ("small" in reason.lower() or "in-phase" in reason.lower()) and "in-phase" not in vel_str:
+                        vel_str += " (in-phase)"
 
                 lines.append(
                     f"  Peak {i + 1}: Period = {period_str} | "
-                    f"Coh = {coh_str} | "
                     f"Phase = {phase_str} | "
                     f"dt = {dt_str} | "
-                    f"Velocity = {vel_str}"
+                    f"Velocity = {vel_str} | "
+                    f"Coh = {coh_str}"
                 )
 
         return "\n".join(lines)

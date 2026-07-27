@@ -205,7 +205,9 @@ class BatchExportWorker(QThread):
                                     ax.set_ylabel("Spectral Power (dB)")
                                     ax.grid(True, alpha=0.3)
 
-                                    peaks, _ = find_peaks(vals, distance=max(1, len(vals) // 50))
+                                    peaks, _ = find_peaks(
+                                        vals, distance=max(1, len(vals) // 200), prominence=0.01 * np.max(vals)
+                                    )
                                     if len(peaks) > 0:
                                         top_idx = sorted(peaks, key=lambda i: vals[i], reverse=True)[:5]
                                         top_periods = sorted([periods[i] for i in top_idx], reverse=True)
@@ -354,7 +356,8 @@ class BatchExportWorker(QThread):
                                     if r == 0:
                                         ax_im.set_title("Quadrature spectrum (Phase shift)")
 
-                                    peaks, _ = find_peaks(vals_pow, distance=max(1, len(vals_pow) // 50))
+                                    dist = max(1, len(vals_pow) // 50)
+                                    peaks, _ = find_peaks(vals_pow, distance=dist, prominence=0.01 * np.max(vals_pow))
                                     if len(peaks) > 0:
                                         top_idx = sorted(peaks, key=lambda i: vals_pow[i], reverse=True)[:3]
                                         top_periods = [periods[i] for i in top_idx]
