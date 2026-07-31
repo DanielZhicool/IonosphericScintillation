@@ -465,8 +465,8 @@ export_provenance_manifest(
 If you use this software suite in your scientific research or publications, please cite it as described in [`CITATION.cff`](CITATION.cff):
 
 ```bibtex
-@software{Zhicool_IonosphericScintillation_2026,
-  author = {Zhicool, Daniel},
+@software{Zhykul_IonosphericScintillation_2026,
+  author = {Zhykul, Danylo},
   title = {IonosphericScintillation: Signal Processing and Time-Frequency Analysis Suite for URAN-4 Data},
   version = {1.0.0},
   year = {2026},

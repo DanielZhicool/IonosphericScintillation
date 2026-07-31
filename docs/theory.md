@@ -173,10 +173,10 @@ $$\mu(f) = \frac{\sum_{k=0}^{K-1} H_k(0) \cdot Y_k(f)}{\sum_{k=0}^{K-1} |H_k(0)|
 
 #### Assumptions:
 - **Harmonic Line Model:** The signal at frequency $f$ consists of a deterministic complex line of amplitude $\mu(f)$ plus locally white Gaussian background noise.
-- **F-Distribution:** Under the null hypothesis (no line present), the statistic $F(f)$ follows an F-distribution with $2$ and $2K-2$ degrees of freedom. A line is detected if $F(f) > F_{\text{crit}}$ at a confidence level $\alpha$ (e.g., $95\%$).
+- **F-Distribution:** Under the null hypothesis (no line present), the statistic $F(f)$ follows an F-distribution with $2$ and $2K-2$ degrees of freedom. A line is detected if $F(f) > F_{\text{crit}}$ at a confidence level $\alpha$ (e.g., 95%).
 
 #### Implementation & Software Defaults:
-- **Function:** `core.spectral_analysis.compute_thomson_ftest()`
+- **Function:** `core.spectral_analysis.compute_ftest()`
 - **Critical Threshold:** Critical value $F_{\text{crit}}$ is evaluated using `scipy.stats.f.ppf(1 - alpha, df1=2, df2=2*K - 2)`.
 - **Defaults:** Significance level $\alpha = 0.01$ ($99\%$ statistical confidence threshold, $F_{\text{crit}} = 6.93$), using $K = 7$ tapers ($df_1 = 2$, $df_2 = 12$).
 
@@ -216,9 +216,9 @@ The standard error of the log-power spectrum $\log \hat{S}(f)$ is:
 
 $$\text{SE}(\log \hat{S}(f)) = \sqrt{ \frac{K-1}{K} \sum_{j=0}^{K-1} \left( \log S_{-j}(f) - \overline{\log S}(f) \right)^2 }$$
 
-Log-normal $95\%$ confidence interval bounds are then given by:
+Log-normal 95% confidence interval bounds are then given by:
 
-$$\text{CI}_{95\%}(f) = \left[ \hat{S}(f) \cdot e^{-1.96 \cdot \text{SE}(f)}, \; \hat{S}(f) \cdot e^{+1.96 \cdot \text{SE}(f)} \right]$$
+$$\text{CI}_{95}(f) = \left[ \hat{S}(f) \cdot e^{-1.96 \cdot \text{SE}(f)}, \; \hat{S}(f) \cdot e^{+1.96 \cdot \text{SE}(f)} \right]$$
 
 #### Implementation & Software Defaults:
 - **Function:** `core.spectral_analysis.compute_multitaper_psd()`
