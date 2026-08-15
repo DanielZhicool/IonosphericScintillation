@@ -2,9 +2,8 @@ import warnings
 from collections.abc import Callable
 
 import numpy as np
-import pandas as pd
 from scipy.interpolate import pchip_interpolate
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, median_filter
 from scipy.signal import butter, detrend, lfilter, savgol_filter, sosfiltfilt
 from scipy.signal.windows import tukey
 
@@ -57,20 +56,14 @@ def clean_and_smooth_signal(
     if polyorder is None:
         polyorder = config.savgol_polyorder if config is not None else cfg.SAVGOL_POLYORDER
 
-    s = pd.Series(arr)
+    # Step 1: Outlier detection (vectorized Hampel filter via C-optimized median_filter)
+    # mode="reflect" ensures boundary continuity at the signal edges
+    rolling_median = median_filter(arr, size=window_size, mode="reflect")
+    abs_dev = np.abs(arr - rolling_median)
+    rolling_mad = 1.4826 * median_filter(abs_dev, size=window_size, mode="reflect")
+    outliers = abs_dev > (n_sigmas * rolling_mad)
 
-    # Step 1: Outlier detection (Hampel-like)
-    # min_periods=1 ensures edge samples are still tested (otherwise the rolling
-    # window is NaN at both ends, silently missing outliers there).
-    rolling_median = s.rolling(window=window_size, center=True, min_periods=1).median()
-    rolling_mad = 1.4826 * (s - rolling_median).abs().rolling(window=window_size, center=True, min_periods=1).median()
-    outliers = (s - rolling_median).abs() > (n_sigmas * rolling_mad)
-
-    cleaned_s = s.copy()
-    cleaned_s[outliers] = rolling_median[outliers]
-
-    cleaned_s = cleaned_s.bfill().ffill()
-    cleaned_signal = cleaned_s.values
+    cleaned_signal = np.where(outliers, rolling_median, arr)
 
     # Step 2: Smoothing (Savitzky-Golay)
     if apply_smoothing:
@@ -250,7 +243,7 @@ def bandpass_filter(
     highcut: float,
     fs: float,
     order: int = 4,
-    tukey_alpha: float | None = None,
+    tukey_alpha: float = 0.0,
     config: cfg.ProcessingConfig | None = None,
 ) -> np.ndarray:
     """
@@ -262,7 +255,8 @@ def bandpass_filter(
         highcut: Upper cutoff frequency in Hz.
         fs: Sampling frequency in Hz.
         order: Filter order. Defaults to 4.
-        tukey_alpha: Tapering alpha parameter for Tukey window. Defaults to config.tukey_alpha or cfg.TUKEY_ALPHA.
+        tukey_alpha: Tapering alpha parameter for Tukey window (default 0.0 to preserve
+            transit boundary scintillations; sosfiltfilt handles zero-phase boundary padding).
         config: Optional ProcessingConfig container override.
 
     Returns:
@@ -288,15 +282,17 @@ def bandpass_filter(
     if highcut >= nyq:
         raise ValueError(f"highcut ({highcut} Hz) must be strictly less than Nyquist frequency ({nyq} Hz)")
 
-    if tukey_alpha is None:
-        tukey_alpha = config.tukey_alpha if config is not None else cfg.TUKEY_ALPHA
-
     # Remove linear trend (baseline drift); this also removes the DC offset.
     data_detrended = detrend(arr, type="linear")
 
-    # Smoothly taper at the edges to zero to avoid filter shock
-    window = tukey(len(data_detrended), alpha=tukey_alpha)
-    data_ready = data_detrended * window
+    # Optional edge tapering if explicitly requested (tukey_alpha > 0.0)
+    # Default is 0.0 to preserve transit boundary scintillations, relying on
+    # sosfiltfilt's zero-phase reflection padding.
+    if tukey_alpha > 0.0:
+        window = tukey(len(data_detrended), alpha=tukey_alpha)
+        data_ready = data_detrended * window
+    else:
+        data_ready = data_detrended
 
     low = lowcut / nyq
     high = highcut / nyq

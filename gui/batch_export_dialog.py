@@ -1,12 +1,9 @@
 import os
 import traceback
 
-import matplotlib
 import numpy as np
 import pandas as pd
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -193,7 +190,8 @@ class BatchExportWorker(QThread):
 
                         # 1. Multitaper PSD
                         if self.graphs_config.get("psd", False):
-                            fig, axes = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
+                            fig = Figure(figsize=(14, 10), constrained_layout=True)
+                            axes = fig.subplots(2, 2)
                             fig.suptitle(
                                 f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  PSD ({band_key})",
                                 fontsize=14,
@@ -229,15 +227,15 @@ class BatchExportWorker(QThread):
                                         )
                                     else:
                                         ax.set_title(ch_name)
-                            plt.savefig(
+                            fig.savefig(
                                 os.path.join(self.output_dir, f"{date_str}_{safe_target}_PSD_{band_key}.png"), dpi=200
                             )
-                            plt.close(fig)
                             saved_count += 1
 
                         # 2. Thomson F-Test
                         if self.graphs_config.get("ftest", False):
-                            fig, axes = plt.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
+                            fig = Figure(figsize=(14, 10), constrained_layout=True)
+                            axes = fig.subplots(2, 2)
                             fig.suptitle(
                                 f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  F-Test ({band_key})",
                                 fontsize=14,
@@ -324,15 +322,15 @@ class BatchExportWorker(QThread):
                                     ax.set_xlabel("Period (Sec)")
                                     ax.set_ylabel("F-Statistic")
                                     ax.grid(True, alpha=0.3)
-                            plt.savefig(
+                            fig.savefig(
                                 os.path.join(self.output_dir, f"{date_str}_{safe_target}_FTest_{band_key}.png"), dpi=200
                             )
-                            plt.close(fig)
                             saved_count += 1
 
                         # 3. Cross-Spectrum
                         if self.graphs_config.get("cross", False):
-                            fig, axes = plt.subplots(2, 3, figsize=(18, 10), constrained_layout=True)
+                            fig = Figure(figsize=(18, 10), constrained_layout=True)
+                            axes = fig.subplots(2, 3)
                             fig.suptitle(
                                 f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  Cross-Spectrum ({band_key})",
                                 fontsize=14,
@@ -388,10 +386,9 @@ class BatchExportWorker(QThread):
                                     for ax in [ax_pow, ax_re, ax_im]:
                                         ax.set_xlabel("Period (Sec)")
                                         ax.grid(True, alpha=0.3)
-                            plt.savefig(
+                            fig.savefig(
                                 os.path.join(self.output_dir, f"{date_str}_{safe_target}_Cross_{band_key}.png"), dpi=200
                             )
-                            plt.close(fig)
                             saved_count += 1
 
                         # 4. IDVE txt log
@@ -452,9 +449,9 @@ class BatchExportWorker(QThread):
 
                         if time_plots:
                             n = len(time_plots)
-                            fig, axes = plt.subplots(n, 1, figsize=(14, 4 * n), constrained_layout=True)
-                            if n == 1:
-                                axes = [axes]
+                            fig = Figure(figsize=(14, 4 * n), constrained_layout=True)
+                            sub = fig.subplots(n, 1)
+                            axes = [sub] if n == 1 else list(sub)
 
                             fig.suptitle(
                                 f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  {channel}  |  {band_key}",
@@ -509,7 +506,7 @@ class BatchExportWorker(QThread):
                                         vmin=0.0 if cfg.CWT_SHOW_LINEAR_AMP else None,
                                         vmax=vmax,
                                     )
-                                    plt.colorbar(im, ax=ax, label=cbar_label)
+                                    fig.colorbar(im, ax=ax, label=cbar_label)
                                     ax.set_ylabel(y_label)
                                     ax.set_title(f"CWT Spectrogram ({band_key})")
                                 else:
@@ -613,8 +610,7 @@ class BatchExportWorker(QThread):
                             safe_target = target.replace("/", "-").replace(" ", "_")
                             fname = f"{date_str}_{safe_target}_{channel}_TimeDomain_{band_key}.png"
                             out_path = os.path.join(self.output_dir, fname)
-                            plt.savefig(out_path, dpi=300, bbox_inches="tight")
-                            plt.close(fig)
+                            fig.savefig(out_path, dpi=300, bbox_inches="tight")
                             saved_count += 1
 
                         tasks_done += 1

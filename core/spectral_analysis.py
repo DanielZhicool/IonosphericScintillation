@@ -477,6 +477,8 @@ def estimate_velocities(
     if enable_phase_regression is None:
         enable_phase_regression = config.enable_phase_regression if config is not None else False
 
+    n_tapers = config.mtm_n_tapers if config is not None else cfg.MTM_N_TAPERS
+
     results = []
     for idx in peak_indices:
         freq0 = freqs[idx]
@@ -541,11 +543,21 @@ def estimate_velocities(
             var_a = (s_sq * W) / den
             se_a = float(np.sqrt(max(var_a, 0.0)))
         else:
-            # Single-point phase conversion
+            # Single-point phase conversion with theoretical cross-spectral phase variance
             single_phase_deg = float(cross_phase_deg[idx])
             dt = single_phase_deg * period / 360.0
             a = 2.0 * np.pi * dt
-            se_a = 0.05 * abs(a) if a != 0 else 0.05
+
+            if coherence is not None:
+                # Theoretical variance of cross-spectral phase (Jenkins & Watts 1968 / Thomson 1982):
+                # Var(phi) = (1 - gamma^2) / (2 * K * gamma^2) [in radians^2]
+                gamma_val = float(np.clip(coherence[idx], 0.01, 0.9999))
+                var_phi = (1.0 - gamma_val**2) / (2.0 * n_tapers * gamma_val**2)
+                se_phi = float(np.sqrt(max(0.0, var_phi)))
+                # Since phi = a * f, SE(a) = SE(phi) / f0
+                se_a = se_phi / freq0
+            else:
+                se_a = 0.05 * abs(a) if a != 0 else 0.05
 
         se_dt = se_a / (2.0 * np.pi)
         dt_ci95 = (dt - 1.96 * se_dt, dt + 1.96 * se_dt)

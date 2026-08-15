@@ -194,3 +194,22 @@ def test_processing_config_overrides() -> None:
 
     cleaned = clean_and_smooth_signal(sig, apply_smoothing=False, config=config)
     assert abs(cleaned[50] - np.sin(t[50])) < 0.5
+
+
+def test_bandpass_filter_boundary_preservation() -> None:
+    """Verify that bandpass_filter preserves boundary signal amplitude when tukey_alpha=0.0."""
+    fs = 100.0
+    t = np.arange(2000) / fs
+    f_sig = 5.0
+    signal = np.sin(2 * np.pi * f_sig * t)
+
+    # Without tapering (default)
+    filtered_untapered = bandpass_filter(signal, lowcut=2.0, highcut=10.0, fs=fs, tukey_alpha=0.0)
+
+    # With tapering
+    filtered_tapered = bandpass_filter(signal, lowcut=2.0, highcut=10.0, fs=fs, tukey_alpha=0.2)
+
+    # Near boundaries (first oscillation cycle, samples 0-20), untapered retains full amplitude (~1.0)
+    # while tapered is suppressed toward zero (< 0.3)
+    assert np.max(np.abs(filtered_untapered[:20])) > 0.8
+    assert np.max(np.abs(filtered_tapered[:20])) < 0.3
