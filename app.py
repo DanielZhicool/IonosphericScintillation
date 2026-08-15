@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication
 from gui.main_window import Uran4App
 
 
-def main():
+def main() -> None:
     app = QApplication(sys.argv)
     window = Uran4App()
     window.show()
