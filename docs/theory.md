@@ -112,8 +112,9 @@ $$\text{MAD}_i = 1.4826 \cdot \text{median}(|x_{i-K} - m_i|, \ldots, |x_{i+K} - 
 
 #### Implementation & Software Defaults:
 - **Function:** `core.signal_processing.clean_and_smooth_signal()`
+- **Algorithm & Implementation:** Evaluated using rolling median operations via `scipy.ndimage.median_filter(..., mode="reflect")` for both the rolling median $m_i$ and the rolling MAD calculation.
 - **Defaults:** Full window width `window_size = 15` samples ($K = 7$ samples on either side), threshold `n_sigmas = 3.0`.
-- **Boundary Handling:** Rolling statistics use `center=True, min_periods=1`, so boundary windows are truncated rather than reflect-padded. Flagged outliers are replaced by local medians, followed by backward/forward filling (`bfill().ffill()`).
+- **Boundary Handling:** Boundary values use reflection padding (`mode="reflect"`). Flagged outliers are replaced via `np.where(outliers, rolling_median, arr)`.
 
 > 📖 **Interactive Notebook Tutorial:** See [`examples/02_preprocessing.ipynb`](../examples/02_preprocessing.ipynb) for a step-by-step notebook demonstration of Hampel outlier filtering and Savitzky-Golay smoothing.
 
@@ -156,25 +157,19 @@ where $h_k = t_{k+1} - t_k$, and slopes $\Delta_k$ are harmonically weighted to 
 
 ---
 
-### 3.4. Zero-Phase Butterworth Bandpass Filtering
+### 3.4. Zero-Phase Butterworth Bandpass Filtering & Boundary Preservation
 To isolate ionospheric wave modes (such as 10–100 s quasi-periodic oscillations) while eliminating baseline receiver drift and Nyquist aliasing noise, a 4th-order digital Butterworth bandpass filter is evaluated in Second-Order Sections (SOS) form:
 
 $$H(z) = \prod_{k=1}^{L} \frac{b_{0k} + b_{1k}z^{-1} + b_{2k}z^{-2}}{1 + a_{1k}z^{-1} + a_{2k}z^{-2}}$$
 
 #### Processing Steps:
 1. **Linear Detrending:** Baseline drift is removed via `scipy.signal.detrend(arr, type='linear')`, removing DC bias and linear slope.
-2. **Tukey Window Tapering:** Edge discontinuities are smoothly tapered to zero using a Tukey (cosine-tapered) window:
-   $$w(n) = \begin{cases} 
-   \frac{1}{2}\left[1 + \cos\left(\pi\left(\frac{2n}{\alpha N} - 1\right)\right)\right], & 0 \le n < \frac{\alpha N}{2} \\
-   1, & \frac{\alpha N}{2} \le n \le N\left(1 - \frac{\alpha}{2}\right) \\
-   \frac{1}{2}\left[1 + \cos\left(\pi\left(\frac{2(N-1-n)}{\alpha N} - 1\right)\right)\right], & N\left(1 - \frac{\alpha}{2}\right) < n \le N-1
-   \end{cases}$$
-   with default $\alpha = 0.1$ ($10\%$ taper across endpoints).
+2. **Boundary Preservation vs. Tapering:** For time-domain IIR bandpass filtering, `tukey_alpha` defaults to `0.0`. Forward-backward filtering (`scipy.signal.sosfiltfilt`) applies zero-phase reflection padding at signal ends, preserving physical scintillation oscillations during source transit entrance and exit epochs without artificial edge attenuation. For continuous wavelet and Fourier transforms, a Tukey cosine taper ($\alpha = 0.05\text{--}0.1$) is applied explicitly to suppress circular wrap-around discontinuity.
 3. **Zero-Phase Filtering:** Evaluated via forward-backward filtering (`scipy.signal.sosfiltfilt`), resulting in zero phase distortion ($\text{Im}\{H_{\text{eff}}(\omega)\} = 0$) and an effective 8th-order squared magnitude response $|H(\omega)|^2$.
 
 #### Implementation & Software Defaults:
 - **Function:** `core.signal_processing.bandpass_filter()`
-- **Defaults:** Passband $0.01 - 0.1\text{ Hz}$ (or $1/150 - 0.2\text{ Hz}$ for wavelets), filter order $4$, Tukey $\alpha = 0.1$.
+- **Defaults:** Passband $0.01 - 0.1\text{ Hz}$ (or $1/150 - 0.2\text{ Hz}$ for wavelets), filter order $4$, default `tukey_alpha = 0.0` (untapered for IIR filtering; explicit tapering passed for CWT).
 
 ---
 
@@ -316,7 +311,26 @@ The effective critical F-statistic threshold $F_{\text{FDR}}$ is then computed f
 
 ---
 
-### 4.6. Weighted Linear Phase Regression & Coherence Gating
+### 4.6. Ionospheric Drift Velocity Estimation (IDVE) & Theoretical Variance
+
+#### Single-Peak Evaluation & Theoretical Phase Variance:
+For isolated spectral peaks at frequency $f_0$, the cross-spectral phase $\Delta\phi = \theta(f_0)$ (in radians) directly defines the propagation time delay:
+
+$$\tau = \frac{\Delta\phi}{2\pi f_0}, \quad v = \text{sign}(\tau) \frac{dx}{|\tau|}$$
+
+The theoretical variance of the cross-spectral phase estimate across $K$ orthogonal DPSS tapers (Jenkins & Watts 1968, Carter 1987) depends directly on the magnitude-squared coherence $\gamma^2 = C_{xy}(f_0)$:
+
+$$\text{Var}(\Delta\phi) \approx \frac{1 - \gamma^2}{2 K \gamma^2} \quad \left[\text{rad}^2\right]$$
+
+Propagating this variance yields standard errors for slope, delay, and velocity:
+
+$$\text{SE}(\Delta\phi) = \sqrt{\text{Var}(\Delta\phi)}, \quad \text{SE}(a) = \frac{\text{SE}(\Delta\phi)}{f_0}$$
+
+$$\text{SE}(\tau) = \frac{\text{SE}(a)}{2\pi} = \frac{\text{SE}(\Delta\phi)}{2\pi f_0}, \quad \text{SE}(v) = \left|\frac{dx}{\tau^2}\right| \cdot \text{SE}(\tau)$$
+
+Analytical 95% confidence intervals are computed as $[\tau \pm 1.96 \cdot \text{SE}(\tau)]$ and $[v \pm 1.96 \cdot \text{SE}(v)]$.
+
+#### Broadband Weighted Linear Phase Regression (WLS):
 For broadband scintillation irregularities covering multiple contiguous frequency bins, the unwrapped phase difference $\phi(f)$ exhibits a linear slope with respect to frequency:
 
 $$\phi(f) = a \cdot f + b, \quad \text{where slope } a = -2\pi \tau$$
@@ -325,16 +339,14 @@ Weighted Least Squares (WLS) regression is fitted over frequencies where magnitu
 
 $$\tau = -\frac{a}{2\pi}, \quad v = \text{sign}(\tau) \frac{dx}{|\tau|}$$
 
-Analytical 95% confidence intervals for $\tau$ and $v$ are propagated from the slope standard error $\text{SE}(a)$:
-
-$$\text{SE}(\tau) = \frac{\text{SE}(a)}{2\pi}, \quad \text{SE}(v) = \left|\frac{dx}{\tau^2}\right| \cdot \text{SE}(\tau)$$
+Analytical 95% confidence intervals for $\tau$ and $v$ are propagated from the empirical regression slope standard error $\text{SE}(a)$.
 
 To preserve complete observational transparency, calculated values for $v$, $\tau$, $\phi$, and coherence are always reported. If mean coherence falls below $C_{\text{min}} = 0.7$ or velocity exceeds physical thresholds ($>10,000\text{ m/s}$), informative tags (`(low coh)`, `(in-phase)`) are appended directly to the output metrics.
 
 #### Implementation & Software Defaults:
 - **Function:** `core.spectral_analysis.estimate_velocities()`
-- **Result Container:** Returns a list of `VelocityEstimate` dataclass instances.
-- **Defaults:** `coherence_threshold` defaults to $0.7$; `enable_phase_regression` defaults to `False` (single-point peak phase default).
+- **Result Container:** Returns a list of `VelocityEstimate` dataclass instances containing `peak_freq`, `dt`, `dt_ci95`, `velocity`, `velocity_ci95`, `coherence`, `is_valid`, and `gating_reason`.
+- **Defaults:** `coherence_threshold` defaults to $0.7$; `enable_phase_regression` defaults to `False` (single-point peak theoretical phase variance default).
 
 ---
 
@@ -342,10 +354,12 @@ To preserve complete observational transparency, calculated values for $v$, $\ta
 
 1. **Thomson, D. J. (1982).** *Spectrum estimation and harmonic analysis.* Proceedings of the IEEE, 70(9), 1055-1096.
 2. **Percival, D. B., & Walden, A. T. (1993).** *Spectral Analysis for Physical Applications.* Cambridge University Press.
-3. **Benjamini, Y., & Hochberg, Y. (1995).** *Controlling the false discovery rate: a practical and powerful approach to multiple testing.* Journal of the Royal Statistical Society B, 57(1), 289-300.
-4. **Hampel, F. R. (1974).** *The influence curve and its role in robust estimation.* Journal of the American Statistical Association, 69(346), 383-393.
-5. **Savitzky, A., & Golay, M. J. (1964).** *Smoothing and differentiation of data by simplified least squares procedures.* Analytical Chemistry, 36(8), 1627-1639.
-6. **Fritsch, F. N., & Carlson, R. E. (1980).** *Monotone Piecewise Cubic Interpolation.* SIAM Journal on Numerical Analysis, 17(2), 238-246.
-7. **Lilly, J. M., & Olhede, S. C. (2012).** *Generalized Morse Wavelets as a Superfamily of Analytic Wavelets.* IEEE Transactions on Signal Processing, 60(11), 6036-6041.
-8. **Daubechies, I., Lu, J., & Wu, H.-T. (2011).** *Synchrosqueezed wavelet transforms: An empirical mode decomposition-like tool.* Applied and Computational Harmonic Analysis, 30(2), 243-261.
-9. **Yeh, K. C., & Liu, C. H. (1982).** *Radio wave scintillations in the ionosphere.* Proceedings of the IEEE, 70(4), 324-360.
+3. **Jenkins, G. M., & Watts, D. G. (1968).** *Spectral Analysis and Its Applications.* Holden-Day, San Francisco.
+4. **Carter, G. C. (1987).** *Coherence and time delay estimation.* Proceedings of the IEEE, 75(2), 236-255.
+5. **Benjamini, Y., & Hochberg, Y. (1995).** *Controlling the false discovery rate: a practical and powerful approach to multiple testing.* Journal of the Royal Statistical Society B, 57(1), 289-300.
+6. **Hampel, F. R. (1974).** *The influence curve and its role in robust estimation.* Journal of the American Statistical Association, 69(346), 383-393.
+7. **Savitzky, A., & Golay, M. J. (1964).** *Smoothing and differentiation of data by simplified least squares procedures.* Analytical Chemistry, 36(8), 1627-1639.
+8. **Fritsch, F. N., & Carlson, R. E. (1980).** *Monotone Piecewise Cubic Interpolation.* SIAM Journal on Numerical Analysis, 17(2), 238-246.
+9. **Lilly, J. M., & Olhede, S. C. (2012).** *Generalized Morse Wavelets as a Superfamily of Analytic Wavelets.* IEEE Transactions on Signal Processing, 60(11), 6036-6041.
+10. **Daubechies, I., Lu, J., & Wu, H.-T. (2011).** *Synchrosqueezed wavelet transforms: An empirical mode decomposition-like tool.* Applied and Computational Harmonic Analysis, 30(2), 243-261.
+11. **Yeh, K. C., & Liu, C. H. (1982).** *Radio wave scintillations in the ionosphere.* Proceedings of the IEEE, 70(4), 324-360.

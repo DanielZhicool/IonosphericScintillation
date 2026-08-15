@@ -19,25 +19,25 @@ This suite integrates a range of digital signal processing (DSP) and statistical
 
 ### 1\. Signal Pre-processing & Cleaning
 
-*   **Hampel Filter (Outlier Detection):** Uses a rolling median and Median Absolute Deviation (MAD) to detect and remove industrial impulse noise/spikes.
-*   **Savitzky-Golay Filter:** Applies polynomial smoothing to reconstruct signal continuity while preserving the physical amplitude of ionospheric scintillations.
+*   **Hampel Filter (Outlier Detection):** Uses a rolling median and Median Absolute Deviation (MAD) via `scipy.ndimage.median_filter` with reflection boundary padding to detect and replace industrial impulse spikes and telecommunication interference.
+*   **Savitzky-Golay Filter:** Applies polynomial smoothing ($k=2$) to reconstruct signal continuity while preserving the physical amplitude of ionospheric scintillations.
 *   **PCHIP Interpolation:** Upsamples the signal ($3\times$) using Piecewise Cubic Hermite Interpolating Polynomials to increase detail without introducing the ringing artifacts (overshoot) common in spline interpolation.
 *   **Red Noise Generation:** Synthesizes AR(1) red noise to fill calibration gaps. The noise is scaled using robust local statistics (median and MAD) computed independently for the left and right context windows (with fallback to the gap itself if empty) to prevent level steps from artificially inflating the noise variance. Edges are blended with a cosine cross-fade (up to 32 samples) so the join is seamless and the interior retains the correct f⁻² spectral slope — a linear ramp would inject low-frequency power and bias the spectrum.
-*   **Tukey Windowing:** Applies a tapered cosine window to the signal boundaries to suppress edge artifacts ("edge fans") during Fourier and Wavelet transforms.
+*   **Zero-Phase Butterworth Bandpass & Boundary Preservation:** A 4th-order SOS filter isolating _"Small bubbles"_ ($5\text{--}150\text{ s}$) and _"Large clouds"_ ($150\text{--}600\text{ s}$). Defaults to untapered time-domain filtering (`tukey_alpha=0.0`) with forward-backward reflection padding (`sosfiltfilt`) to preserve physical scintillation oscillations across source transit ingress and egress boundaries.
+*   **Tukey Windowing:** Applies a tapered cosine window to boundaries during Fourier and Continuous Wavelet Transforms to suppress circular wrap-around edge leakage.
 
 ### 2\. Wavelet & Time-Frequency Analysis
 
-*   **Continuous Wavelet Transform (CWT):** Uses Generalized Morse Wavelets to analyze the non-stationary frequency content of scintillations over time.
-*   **Synchrosqueezing Transform (SST):** Reassigns CWT coefficients along the frequency axis to sharpen the spectrogram, producing extremely narrow, high-resolution spectral lines.
-*   **Butterworth Bandpass Filter:** A 4th-order SOS (Second-Order Sections) filter used to isolate specific temporal scales, categorizing them into _"Small bubbles"_ ($5\text{--}150\text{ s}$) and _"Large clouds"_ ($150\text{--}600\text{ s}$).
+*   **Continuous Wavelet Transform (CWT):** Uses Generalized Morse Wavelets ($\gamma=3, \beta=30$) to analyze the non-stationary frequency content of scintillations over time.
+*   **Synchrosqueezing Transform (SST):** Reassigns CWT coefficients along the frequency axis to sharpen the spectrogram, producing extremely narrow, high-resolution spectral ridges.
 
 ### 3. Spectral Analysis & Drift Velocity Estimation
 
-*   **Thomson Multitaper Power Spectral Density (PSD):** Uses Discrete Prolate Spheroidal Sequences (DPSS/Slepian tapers) to estimate a low-variance, low-bias power spectrum.
+*   **Thomson Multitaper Power Spectral Density (PSD):** Uses Discrete Prolate Spheroidal Sequences (DPSS/Slepian tapers, $K=7, NW=4.0$) to estimate a low-variance, low-bias power spectrum, achieving an empirical ~6.4x variance reduction over standard periodograms.
 *   **Jackknife 95% Confidence Intervals:** Calculates non-parametric Jackknife log-PSD standard errors across DPSS tapers to provide robust statistical confidence bounds.
 *   **Thomson F-Test with FDR Control:** A statistical test used to detect deterministic harmonic lines against a continuous background, incorporating Benjamini-Hochberg False Discovery Rate (FDR at $\alpha = 0.05$) control for multiple hypothesis testing.
-*   **Multitaper Cross-Spectral Analysis & Coherence Gating:** Calculates the co-spectrum, quadrature spectrum, and magnitude-squared coherence between 20 MHz and 25 MHz interferometric channels. Calculated velocity, time delay, phase, and coherence are reported for all peaks, with `(low coh)` or `(in-phase)` tags added for low coherence or high-speed signals.
-*   **Weighted Linear Phase Regression IDVE:** Estimates propagation time delays $\tau$ and horizontal drift velocities $v$ using unwrapped Weighted Least Squares (WLS) phase slope regression ($\phi(f) = a f + b$) over high-coherence bands, propagating analytical 95% confidence intervals via the Delta method.
+*   **Multitaper Cross-Spectral Analysis & Coherence Gating:** Calculates the co-spectrum, quadrature spectrum, and magnitude-squared coherence $\gamma^2(f)$ between 20 MHz and 25 MHz interferometric channels ($dx = 2500\text{ m}$).
+*   **Theoretical Phase Variance & IDVE Velocity:** Translates cross-spectral phase differences into physical ionospheric drift velocities $v = \text{sign}(\tau) \cdot dx / |\tau|$. Single-point estimates propagate theoretical cross-spectral phase variance $\text{Var}(\Delta\phi) = \frac{1 - \gamma^2}{2 K \gamma^2}$ into analytical 95% confidence intervals; broadband features utilize Weighted Least Squares (WLS) phase slope regression. All detected peaks report velocity, delay, and coherence with automated validity and gating flags (`(low coh)`, `(in-phase)`).
 
 ---
 
@@ -195,13 +195,20 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 
 ---
 
-## Installation
+## Installation & Quickstart
 
-1.  Install [uv](https://github.com/astral-sh/uv), the fast Python package manager (e.g., `pip install uv` or via your system's package manager).
-2.  Clone this repository and navigate to the project directory.
-3.  Launch the application (this automatically creates a virtual environment and installs all dependencies):
+1. Install [uv](https://github.com/astral-sh/uv), the fast Python package manager.
+2. Clone this repository and navigate to the project directory.
+3. Launch the application directly (this automatically manages dependencies via PEP 517 build standards):
+```bash
+uv run uran4
+# Or alternatively: uv run app.py
 ```
-uv run app.py
+
+### Editable Development Installation
+To install the project in editable mode for development or scripting with interactive Jupyter notebooks:
+```bash
+uv pip install -e .
 ```
 ---
 
@@ -332,9 +339,23 @@ Click the **⚙ Settings** button at the bottom of the left panel to open the se
 
 ---
 
-## Configuration Parameters (`core/config.py`)
+## Configuration Parameters (`core/config.py` & `ProcessingConfig`)
 
-These parameters define the default values for the processing pipeline and can be adjusted via the UI settings or by editing `core/config.py` directly:
+The processing pipeline is parameterized using the immutable `ProcessingConfig` dataclass container (`core/config.py`), preventing global mutable state bugs and ensuring reproducible parameter encapsulation across UI tabs, CLI scripts, and export workers.
+
+```python
+from core.config import ProcessingConfig
+
+# Instantiate configuration with custom parameters
+config = ProcessingConfig(
+    window_size=15,
+    n_sigmas=3.0,
+    sampling_rate=1.0,
+    mtm_n_tapers=7,
+    mtm_nw=4.0,
+    coherence_threshold=0.7,
+)
+```
 
 ### Session Parsing
 
@@ -351,7 +372,7 @@ These parameters define the default values for the processing pipeline and can b
 | `DEFAULT_WINDOW_SIZE` | `15` | Hampel filter rolling window size (samples) |
 | `DEFAULT_N_SIGMAS` | `3.0` | Outlier threshold in standard deviations |
 | `SAVGOL_POLYORDER` | `2` | Savitzky-Golay polynomial order |
-| `TUKEY_ALPHA` | `0.1` | Edge taper fraction for the Tukey window |
+| `TUKEY_ALPHA` | `0.0` | Default edge taper fraction for time-domain filtering (0.0 preserves transit boundaries) |
 
 ### Frequency-Time Analysis (CWT)
 
