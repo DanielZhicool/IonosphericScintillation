@@ -46,10 +46,7 @@ This notebook demonstrates the physical and mathematical signal models used to s
 3. **Deterministic Harmonics**: Scintillation wave modes embedded at peak frequencies $f_0$.
 4. **Dual-Channel Phase Delay**: Delay $\\tau = dx / v$ between dual-beam observations ($dx = 2500\\text{ m}$).
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import numpy as np
+            code_cell("""import numpy as np
 import matplotlib.pyplot as plt
 
 from core.synthetic_generator import generate_synthetic_scintillation, generate_power_law_noise
@@ -116,10 +113,7 @@ This notebook demonstrates the digital signal processing (DSP) cleaning pipeline
 2. **Savitzky-Golay Filter**: Polynomial smoothing ($k=2$) to preserve peak amplitudes while suppressing high-frequency measurement noise.
 3. **Butterworth Bandpass Filtering**: 4th-order SOS filter isolating **Small Scale Bubbles** ($5\\text{--}150\\text{ s}$) and **Large Scale Clouds** ($150\\text{--}600\\text{ s}$).
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import numpy as np
+            code_cell("""import numpy as np
 import matplotlib.pyplot as plt
 
 from core.signal_processing import bandpass_filter, clean_and_smooth_signal
@@ -193,10 +187,7 @@ This notebook compares **Continuous Wavelet Transform (CWT)** and **Synchrosquee
 - Reassigns CWT energy coefficients along the frequency axis based on instantaneous frequency $\\omega(a, b) = -i \\frac{\\partial_b W(a, b)}{W(a, b)}$.
 - Sharpen ridges and eliminates vertical smearing ("smearing fans") in time-frequency space.
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import numpy as np
+            code_cell("""import numpy as np
 import matplotlib.pyplot as plt
 
 from core.signal_processing import compute_cwt_spectrogram
@@ -247,10 +238,7 @@ plt.show()
 
 This notebook demonstrates **Thomson Multitaper Power Spectral Density (PSD)** estimation using Discrete Prolate Spheroidal Sequences (DPSS/Slepian tapers, $K=7, NW=4.0$), non-parametric **Jackknife 95% Confidence Intervals**, and **Thomson F-Test** for deterministic harmonic line detection with **Benjamini-Hochberg FDR control** ($\alpha=0.05$).
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import numpy as np
+            code_cell("""import numpy as np
 import matplotlib.pyplot as plt
 
 from core.spectral_analysis import compute_multitaper_psd, compute_ftest
@@ -314,10 +302,7 @@ This notebook demonstrates **Ionospheric Drift Velocity Estimation (IDVE)** via 
 4. **Weighted Linear Regression**: $\\phi(f) = \\phi_0 - 2\\pi f \\tau$ over high-coherence bands ($C_{xy} \\ge 0.7$).
 5. **Velocity Recovery**: $v = \\text{sign}(\\tau) \\frac{dx}{|\\tau|}$ ($dx = 2500\\text{ m}$).
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import numpy as np
+            code_cell("""import numpy as np
 import matplotlib.pyplot as plt
 
 from core.synthetic_generator import generate_synthetic_scintillation
@@ -384,10 +369,7 @@ for i, est in enumerate(estimates):
 
 This notebook performs a quantitative validation of the complete processing pipeline by comparing extracted parameters against injected ground truth values.
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import numpy as np
+            code_cell("""import numpy as np
 import pandas as pd
 
 from core.synthetic_generator import generate_synthetic_scintillation
@@ -442,10 +424,7 @@ print(results_df.to_string(index=False))
 
 This notebook demonstrates the complete observational workflow for analyzing real URAN-4 radio telescope observations, from raw file reading to time-frequency analysis and JSON provenance audit manifest export.
 """),
-            code_cell("""import sys, os
-sys.path.insert(0, os.path.abspath(".."))
-
-import pandas as pd
+            code_cell("""import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
