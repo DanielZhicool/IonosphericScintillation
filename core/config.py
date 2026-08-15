@@ -72,3 +72,8 @@ class ProcessingConfig:
     cwt_nv_clouds: int = CWT_NV_CLOUDS
     morse_gamma: float = MORSE_GAMMA
     morse_beta: float = MORSE_BETA
+    gaussian_sigma_freq: float = GAUSSIAN_SIGMA_FREQ
+    gaussian_sigma_time: float = GAUSSIAN_SIGMA_TIME
+    cwt_dynamic_range_db: float = CWT_DYNAMIC_RANGE_DB
+    cwt_show_period: bool = CWT_SHOW_PERIOD
+    cwt_show_linear_amp: bool = CWT_SHOW_LINEAR_AMP

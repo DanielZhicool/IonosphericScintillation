@@ -75,10 +75,11 @@ _BUILTIN_PRESETS = {
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, current_config: cfg.ProcessingConfig | None = None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(430, 680)
+        self.current_config = current_config if current_config is not None else cfg.ProcessingConfig()
         layout = QVBoxLayout(self)
 
         # --- Preset bar ---
@@ -125,33 +126,39 @@ class SettingsDialog(QDialog):
 
         self.inputs = {}
 
+        conf = self.current_config
         # CWT Params
-        self.add_spinbox("CWT_NV Bubbles (Voices per octave)", "CWT_NV_BUBBLES", cfg.CWT_NV_BUBBLES, 16, 512, step=16)
-        self.add_spinbox("CWT_NV Clouds (Voices per octave)", "CWT_NV_CLOUDS", cfg.CWT_NV_CLOUDS, 16, 512, step=16)
-        self.add_double_spinbox("MORSE_GAMMA (Wavelet symmetry)", "MORSE_GAMMA", cfg.MORSE_GAMMA, 1.0, 10.0, step=1.0)
+        self.add_spinbox("CWT_NV Bubbles (Voices per octave)", "CWT_NV_BUBBLES", conf.cwt_nv_bubbles, 16, 512, step=16)
+        self.add_spinbox("CWT_NV Clouds (Voices per octave)", "CWT_NV_CLOUDS", conf.cwt_nv_clouds, 16, 512, step=16)
+        self.add_double_spinbox("MORSE_GAMMA (Wavelet symmetry)", "MORSE_GAMMA", conf.morse_gamma, 1.0, 10.0, step=1.0)
         self.add_double_spinbox(
-            "MORSE_BETA (Wavelet time-bandwidth)", "MORSE_BETA", cfg.MORSE_BETA, 1.0, 120.0, step=1.0
+            "MORSE_BETA (Wavelet time-bandwidth)", "MORSE_BETA", conf.morse_beta, 1.0, 120.0, step=1.0
         )
         self.add_double_spinbox(
-            "GAUSSIAN_SIGMA_FREQ (Blur frequency)", "GAUSSIAN_SIGMA_FREQ", cfg.GAUSSIAN_SIGMA_FREQ, 0.0, 10.0, step=0.1
+            "GAUSSIAN_SIGMA_FREQ (Blur frequency)",
+            "GAUSSIAN_SIGMA_FREQ",
+            conf.gaussian_sigma_freq,
+            0.0,
+            10.0,
+            step=0.1,
         )
         self.add_double_spinbox(
-            "GAUSSIAN_SIGMA_TIME (Blur time)", "GAUSSIAN_SIGMA_TIME", cfg.GAUSSIAN_SIGMA_TIME, 0.0, 10.0, step=0.1
+            "GAUSSIAN_SIGMA_TIME (Blur time)", "GAUSSIAN_SIGMA_TIME", conf.gaussian_sigma_time, 0.0, 10.0, step=0.1
         )
         self.add_double_spinbox(
-            "CWT_DYNAMIC_RANGE_DB", "CWT_DYNAMIC_RANGE_DB", cfg.CWT_DYNAMIC_RANGE_DB, 10.0, 100.0, step=5.0
+            "CWT_DYNAMIC_RANGE_DB", "CWT_DYNAMIC_RANGE_DB", conf.cwt_dynamic_range_db, 10.0, 100.0, step=5.0
         )
 
         # Spectral Params
-        self.add_spinbox("MTM_N_TAPERS (DPSS tapers)", "MTM_N_TAPERS", cfg.MTM_N_TAPERS, 1, 20, step=1)
-        self.add_double_spinbox("MTM_NW (Time-bandwidth product)", "MTM_NW", cfg.MTM_NW, 1.0, 10.0, step=0.5)
-        self.add_double_spinbox("FTEST_CONFIDENCE", "FTEST_CONFIDENCE", cfg.FTEST_CONFIDENCE, 0.5, 0.999, step=0.01)
+        self.add_spinbox("MTM_N_TAPERS (DPSS tapers)", "MTM_N_TAPERS", conf.mtm_n_tapers, 1, 20, step=1)
+        self.add_double_spinbox("MTM_NW (Time-bandwidth product)", "MTM_NW", conf.mtm_nw, 1.0, 10.0, step=0.5)
+        self.add_double_spinbox("FTEST_CONFIDENCE", "FTEST_CONFIDENCE", conf.ftest_confidence, 0.5, 0.999, step=0.01)
 
         self.add_double_spinbox(
-            "CROSS_SPECTRUM_DX (Baseline m)", "CROSS_SPECTRUM_DX", cfg.CROSS_SPECTRUM_DX, 100.0, 10000.0, step=100.0
+            "CROSS_SPECTRUM_DX (Baseline m)", "CROSS_SPECTRUM_DX", conf.cross_spectrum_dx, 100.0, 10000.0, step=100.0
         )
-        self.add_spinbox("VELOCITY_N_PEAKS", "VELOCITY_N_PEAKS", cfg.VELOCITY_N_PEAKS, 1, 10, step=1)
-        self.add_spinbox("PCHIP_FACTOR (Upsampling)", "PCHIP_FACTOR", cfg.PCHIP_FACTOR, 1, 10, step=1)
+        self.add_spinbox("VELOCITY_N_PEAKS", "VELOCITY_N_PEAKS", conf.velocity_n_peaks, 1, 10, step=1)
+        self.add_spinbox("PCHIP_FACTOR (Upsampling)", "PCHIP_FACTOR", conf.pchip_factor, 1, 10, step=1)
 
         scroll.setWidget(content)
         layout.addWidget(scroll)
@@ -259,28 +266,38 @@ class SettingsDialog(QDialog):
                 QMessageBox.critical(self, "Load Error", str(e))
 
     # ------------------------------------------------------------------
-    # Apply to live config
+    # Config getter & Apply
     # ------------------------------------------------------------------
+    def get_config(self) -> cfg.ProcessingConfig:
+        """Construct an immutable ProcessingConfig from current form values."""
+        return cfg.ProcessingConfig(
+            cwt_nv_bubbles=int(self.inputs["CWT_NV_BUBBLES"].value()),
+            cwt_nv_clouds=int(self.inputs["CWT_NV_CLOUDS"].value()),
+            morse_gamma=float(self.inputs["MORSE_GAMMA"].value()),
+            morse_beta=float(self.inputs["MORSE_BETA"].value()),
+            gaussian_sigma_freq=float(self.inputs["GAUSSIAN_SIGMA_FREQ"].value()),
+            gaussian_sigma_time=float(self.inputs["GAUSSIAN_SIGMA_TIME"].value()),
+            cwt_dynamic_range_db=float(self.inputs["CWT_DYNAMIC_RANGE_DB"].value()),
+            mtm_n_tapers=int(self.inputs["MTM_N_TAPERS"].value()),
+            mtm_nw=float(self.inputs["MTM_NW"].value()),
+            ftest_confidence=float(self.inputs["FTEST_CONFIDENCE"].value()),
+            cross_spectrum_dx=float(self.inputs["CROSS_SPECTRUM_DX"].value()),
+            velocity_n_peaks=int(self.inputs["VELOCITY_N_PEAKS"].value()),
+            pchip_factor=int(self.inputs["PCHIP_FACTOR"].value()),
+            cwt_show_period=self.current_config.cwt_show_period,
+            cwt_show_linear_amp=self.current_config.cwt_show_linear_amp,
+            sampling_rate=self.current_config.sampling_rate,
+            tukey_alpha=self.current_config.tukey_alpha,
+            pchip_long_signal_threshold=self.current_config.pchip_long_signal_threshold,
+            window_size=self.current_config.window_size,
+            n_sigmas=self.current_config.n_sigmas,
+            savgol_polyorder=self.current_config.savgol_polyorder,
+            fdr_alpha=self.current_config.fdr_alpha,
+            coherence_threshold=self.current_config.coherence_threshold,
+            phase_regression_bandwidth_hz=self.current_config.phase_regression_bandwidth_hz,
+            enable_phase_regression=self.current_config.enable_phase_regression,
+            compute_jackknife_ci=self.current_config.compute_jackknife_ci,
+        )
+
     def apply_settings(self):
-        cfg.CWT_NV_BUBBLES = self.inputs["CWT_NV_BUBBLES"].value()
-        cfg.CWT_NV_CLOUDS = self.inputs["CWT_NV_CLOUDS"].value()
-        cfg.MORSE_GAMMA = self.inputs["MORSE_GAMMA"].value()
-        cfg.MORSE_BETA = self.inputs["MORSE_BETA"].value()
-        cfg.GAUSSIAN_SIGMA_FREQ = self.inputs["GAUSSIAN_SIGMA_FREQ"].value()
-        cfg.GAUSSIAN_SIGMA_TIME = self.inputs["GAUSSIAN_SIGMA_TIME"].value()
-        cfg.CWT_DYNAMIC_RANGE_DB = self.inputs["CWT_DYNAMIC_RANGE_DB"].value()
-
-        cfg.MTM_N_TAPERS = self.inputs["MTM_N_TAPERS"].value()
-        cfg.MTM_NW = self.inputs["MTM_NW"].value()
-        cfg.FTEST_CONFIDENCE = self.inputs["FTEST_CONFIDENCE"].value()
-
-        cfg.CROSS_SPECTRUM_DX = self.inputs["CROSS_SPECTRUM_DX"].value()
-        cfg.VELOCITY_N_PEAKS = self.inputs["VELOCITY_N_PEAKS"].value()
-        cfg.PCHIP_FACTOR = self.inputs["PCHIP_FACTOR"].value()
-
         self.accept()
-        parent = self.parent()
-        if parent is not None:
-            run_analysis = getattr(parent, "run_analysis", None)
-            if run_analysis is not None:
-                run_analysis()

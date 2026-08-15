@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ionosphericscintillation"
 version = "1.0.0"
@@ -14,6 +18,9 @@ dependencies = [
     "ssqueezepy>=0.6.6",
 ]
 
+[project.scripts]
+uran4 = "app:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.15.0",
@@ -22,6 +29,9 @@ dev = [
     "pytest-benchmark>=5.2.3",
     "ruff>=0.9.6",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "gui"]
 
 [tool.ruff]
 line-length = 120
@@ -49,5 +59,8 @@ disallow_incomplete_defs = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--benchmark-skip"
+
 
 

@@ -17,7 +17,17 @@ class SpectralAnalysisWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, pm_signals, fs, signal_duration, bands, window_size, n_sigmas, apply_smoothing):
+    def __init__(
+        self,
+        pm_signals,
+        fs,
+        signal_duration,
+        bands,
+        window_size,
+        n_sigmas,
+        apply_smoothing,
+        config=None,
+    ):
         super().__init__()
         self.pm_signals = pm_signals
         self.fs = fs
@@ -26,6 +36,7 @@ class SpectralAnalysisWorker(QThread):
         self.window_size = window_size
         self.n_sigmas = n_sigmas
         self.apply_smoothing = apply_smoothing
+        self.config = config
 
     def run(self):
         try:
@@ -50,6 +61,7 @@ class SpectralAnalysisWorker(QThread):
                     self.n_sigmas,
                     self.apply_smoothing,
                     progress_callback=prog_cb,
+                    config=self.config,
                 )
                 band_results[band_key] = res
 
@@ -73,7 +85,17 @@ class SignalAnalysisWorker(QThread):
     finished = Signal(tuple)
     error = Signal(str)
 
-    def __init__(self, raw_signal, fs, lowcut, highcut, window_size, n_sigmas, apply_smoothing):
+    def __init__(
+        self,
+        raw_signal,
+        fs,
+        lowcut,
+        highcut,
+        window_size,
+        n_sigmas,
+        apply_smoothing,
+        config=None,
+    ):
         super().__init__()
         self.raw_signal = raw_signal
         self.fs = fs
@@ -82,6 +104,7 @@ class SignalAnalysisWorker(QThread):
         self.window_size = window_size
         self.n_sigmas = n_sigmas
         self.apply_smoothing = apply_smoothing
+        self.config = config
 
     def run(self):
         try:
@@ -96,6 +119,7 @@ class SignalAnalysisWorker(QThread):
                 self.n_sigmas,
                 self.apply_smoothing,
                 progress_callback=self.progress.emit,
+                config=self.config,
             )
             self.finished.emit((filtered_sig, img_data))
         except Exception:

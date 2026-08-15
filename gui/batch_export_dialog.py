@@ -52,6 +52,7 @@ class BatchExportWorker(QThread):
         selected_channels,
         graphs_config,
         output_dir,
+        config=None,
     ):
         super().__init__()
         self.df_pm6 = df_pm6
@@ -65,6 +66,7 @@ class BatchExportWorker(QThread):
         self.selected_channels = selected_channels
         self.graphs_config = graphs_config
         self.output_dir = output_dir
+        self.config = config
         self._is_cancelled = False
 
         # Determine bands based on selection
@@ -89,6 +91,7 @@ class BatchExportWorker(QThread):
             if self.selected_sessions:
                 import json
 
+                conf = self.config if self.config is not None else cfg.ProcessingConfig()
                 settings = {
                     "window_size": self.window_size,
                     "n_sigmas": self.n_sigmas,
@@ -97,14 +100,14 @@ class BatchExportWorker(QThread):
                     "selected_channels": self.selected_channels,
                     "bands": self.bands,
                     "cwt_config": {
-                        "nv_bubbles": cfg.CWT_NV_BUBBLES,
-                        "nv_clouds": cfg.CWT_NV_CLOUDS,
-                        "gamma": cfg.MORSE_GAMMA,
-                        "beta": cfg.MORSE_BETA,
-                        "sigma_freq": cfg.GAUSSIAN_SIGMA_FREQ,
-                        "sigma_time": cfg.GAUSSIAN_SIGMA_TIME,
-                        "dynamic_range_db": cfg.CWT_DYNAMIC_RANGE_DB,
-                        "pchip_factor": cfg.PCHIP_FACTOR,
+                        "nv_bubbles": conf.cwt_nv_bubbles,
+                        "nv_clouds": conf.cwt_nv_clouds,
+                        "gamma": conf.morse_gamma,
+                        "beta": conf.morse_beta,
+                        "sigma_freq": conf.gaussian_sigma_freq,
+                        "sigma_time": conf.gaussian_sigma_time,
+                        "dynamic_range_db": conf.cwt_dynamic_range_db,
+                        "pchip_factor": conf.pchip_factor,
                     },
                 }
                 with open(os.path.join(self.output_dir, "BatchExportSettings.txt"), "w") as f:
@@ -166,6 +169,7 @@ class BatchExportWorker(QThread):
                                 self.n_sigmas,
                                 self.apply_smoothing,
                                 progress_callback=lambda x: None,
+                                config=self.config,
                             )
                             band_results[band_key] = res
                     spectral_results = band_results
@@ -432,6 +436,7 @@ class BatchExportWorker(QThread):
                                 self.apply_smoothing,
                                 progress_callback=lambda x: None,
                                 cancel_check=lambda: self._is_cancelled,
+                                config=self.config,
                             )
                             filtered_sig = f_sig
                             img_data = i_data
@@ -634,7 +639,17 @@ class BatchExportDialog(QDialog):
     """Dialog for configuring and running a batch export of plots."""
 
     def __init__(
-        self, df_pm6, df_pm6_original, sessions, start_datetime, fs, window_size, n_sigmas, apply_smoothing, parent=None
+        self,
+        df_pm6,
+        df_pm6_original,
+        sessions,
+        start_datetime,
+        fs,
+        window_size,
+        n_sigmas,
+        apply_smoothing,
+        parent=None,
+        config=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Batch Export")
@@ -648,6 +663,7 @@ class BatchExportDialog(QDialog):
         self.window_size = window_size
         self.n_sigmas = n_sigmas
         self.apply_smoothing = apply_smoothing
+        self.config = config
 
         # Add Full Overview pseudo-session
         max_end = len(df_pm6)
@@ -857,6 +873,7 @@ class BatchExportDialog(QDialog):
             selected_channels=selected_chans,
             graphs_config=graphs_config,
             output_dir=self.output_dir,
+            config=self.config,
         )
 
         self.worker.progress.connect(self.update_progress)

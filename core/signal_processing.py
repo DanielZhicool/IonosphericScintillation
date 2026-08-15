@@ -356,6 +356,10 @@ def compute_cwt_spectrogram(
     tukey_a = config.tukey_alpha if config is not None else cfg.TUKEY_ALPHA
     gamma = config.morse_gamma if config is not None else cfg.MORSE_GAMMA
     beta = config.morse_beta if config is not None else cfg.MORSE_BETA
+    sigma_freq = config.gaussian_sigma_freq if config is not None else cfg.GAUSSIAN_SIGMA_FREQ
+    sigma_time = config.gaussian_sigma_time if config is not None else cfg.GAUSSIAN_SIGMA_TIME
+    dynamic_range_db = config.cwt_dynamic_range_db if config is not None else cfg.CWT_DYNAMIC_RANGE_DB
+    show_linear_amp = config.cwt_show_linear_amp if config is not None else cfg.CWT_SHOW_LINEAR_AMP
 
     if nv is None:
         nv = nv_bubbles if lowcut >= 1.0 / 150.0 - 1e-6 else nv_clouds
@@ -381,8 +385,8 @@ def compute_cwt_spectrogram(
     def process_chunk(chunk_mag: np.ndarray) -> np.ndarray:
         """Applies blur, contrast mapping, and pooling to a single chunk."""
         # Local 2D Gaussian blur (boundary effects are tiny compared to overlap)
-        chunk_mag = gaussian_filter(chunk_mag, sigma=(cfg.GAUSSIAN_SIGMA_FREQ, cfg.GAUSSIAN_SIGMA_TIME))
-        if cfg.CWT_SHOW_LINEAR_AMP:
+        chunk_mag = gaussian_filter(chunk_mag, sigma=(sigma_freq, sigma_time))
+        if show_linear_amp:
             return chunk_mag
         else:
             # Log contrast
@@ -422,7 +426,7 @@ def compute_cwt_spectrogram(
         if pool_size > 1:
             pad_len = (pool_size - (Wx_db.shape[1] % pool_size)) % pool_size
             if pad_len > 0:
-                pad_val = 0.0 if cfg.CWT_SHOW_LINEAR_AMP else -np.inf
+                pad_val = 0.0 if show_linear_amp else -np.inf
                 Wx_db = np.pad(Wx_db, ((0, 0), (0, pad_len)), constant_values=pad_val)
             Wx_db = Wx_db.reshape(Wx_db.shape[0], -1, pool_size).max(axis=2)
     else:
@@ -512,7 +516,7 @@ def compute_cwt_spectrogram(
         # Flush the final unpooled buffer seamlessly
         if pool_size > 1 and unpooled_buffer is not None and unpooled_buffer.shape[1] > 0:
             pad_len = pool_size - unpooled_buffer.shape[1]
-            pad_val = 0.0 if cfg.CWT_SHOW_LINEAR_AMP else -np.inf
+            pad_val = 0.0 if show_linear_amp else -np.inf
             padded_buffer = np.pad(unpooled_buffer, ((0, 0), (0, pad_len)), constant_values=pad_val)
             pooled = padded_buffer.reshape(padded_buffer.shape[0], -1, pool_size).max(axis=2)
             Wx_db_chunks.append(pooled)
@@ -523,7 +527,7 @@ def compute_cwt_spectrogram(
         del Wx_db_chunks
         gc.collect()
 
-    if cfg.CWT_SHOW_LINEAR_AMP:
+    if show_linear_amp:
         # Return transposed (time, frequency) directly
         return Wx_db.T
     else:
@@ -534,7 +538,7 @@ def compute_cwt_spectrogram(
                 0.0 if np.all(np.isnan(Wx_db)) else (np.nanpercentile(Wx_db, 99.9) if use_ssq else np.nanmax(Wx_db))
             )
 
-        Wx_contrast = np.clip(Wx_db, a_min=max_db - cfg.CWT_DYNAMIC_RANGE_DB, a_max=max_db)
+        Wx_contrast = np.clip(Wx_db, a_min=max_db - dynamic_range_db, a_max=max_db)
 
         # Return transposed (time, frequency) for pyqtgraph
         return Wx_contrast.T

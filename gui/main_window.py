@@ -89,6 +89,7 @@ class Uran4App(QMainWindow):
         self.sessions = []
         self.worker = None
         self._pending_reanalysis = False
+        self.config = cfg.ProcessingConfig()
 
         self.init_ui()
 
@@ -306,8 +307,10 @@ class Uran4App(QMainWindow):
             self.run_analysis()
 
     def open_settings(self):
-        dialog = SettingsDialog(self)
-        dialog.exec()
+        dialog = SettingsDialog(self, current_config=self.config)
+        if dialog.exec():
+            self.config = dialog.get_config()
+            self.run_analysis(force=True)
 
     def change_active_channel(self, channel_name):
         active_tab = self.get_active_tab()
@@ -658,6 +661,7 @@ class Uran4App(QMainWindow):
             n_sigmas=self.spin_sigmas.value(),
             apply_smoothing=self.check_smooth.isChecked(),
             parent=self,
+            config=self.config,
         )
         dialog.exec()
 
@@ -751,7 +755,14 @@ class Uran4App(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
             self.worker = SignalAnalysisWorker(
-                active_tab.raw_signal, self.fs, lowcut, highcut, window_size, n_sigmas, apply_smoothing
+                active_tab.raw_signal,
+                self.fs,
+                lowcut,
+                highcut,
+                window_size,
+                n_sigmas,
+                apply_smoothing,
+                config=self.config,
             )
 
             def on_finished(result):
@@ -1024,7 +1035,14 @@ class Uran4App(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
             self.worker = SpectralAnalysisWorker(
-                pm_signals, self.fs, signal_duration, bands, window_size, n_sigmas, apply_smoothing
+                pm_signals,
+                self.fs,
+                signal_duration,
+                bands,
+                window_size,
+                n_sigmas,
+                apply_smoothing,
+                config=self.config,
             )
 
             # Find the day tab and source name
@@ -1109,7 +1127,14 @@ class Uran4App(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
             self.worker = SpectralAnalysisWorker(
-                pm_signals, self.fs, signal_duration, bands, window_size, n_sigmas, apply_smoothing
+                pm_signals,
+                self.fs,
+                signal_duration,
+                bands,
+                window_size,
+                n_sigmas,
+                apply_smoothing,
+                config=self.config,
             )
 
             def on_finished(band_results):
