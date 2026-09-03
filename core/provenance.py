@@ -62,7 +62,7 @@ class ProvenanceManifest:
     """Structured scientific provenance manifest."""
 
     manifest_version: str = "1.0"
-    app_version: str = "1.0.0"
+    app_version: str = "1.0.1"
     created_at_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     git_commit: str = field(default_factory=get_git_commit_hash)
     input_file: dict[str, Any] = field(default_factory=dict)

@@ -61,7 +61,7 @@ def test_generate_provenance_manifest(tmp_path: Path) -> None:
     )
 
     assert isinstance(manifest, ProvenanceManifest)
-    assert manifest.app_version == "1.0.0"
+    assert manifest.app_version == "1.0.1"
     assert manifest.input_file["filename"] == "sample.pm6"
     assert "sha256" in manifest.input_file
     assert manifest.config["mtm_nw"] == 3.5
@@ -73,7 +73,7 @@ def test_generate_provenance_manifest(tmp_path: Path) -> None:
 
     json_str = manifest.to_json()
     parsed = json.loads(json_str)
-    assert parsed["app_version"] == "1.0.0"
+    assert parsed["app_version"] == "1.0.1"
 
 
 def test_export_provenance_manifest(tmp_path: Path) -> None:

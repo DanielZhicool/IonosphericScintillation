@@ -171,6 +171,7 @@ class Tukey2,BP2,PSD,FTest,Cross,IDVE spec
 │   ├── create_examples.py    # Generator for interactive tutorial notebook suite
 │   └── package_exe.py        # PyInstaller standalone desktop application packager
 ├── tests/                    # Automated unit, integration, and benchmark test suite
+│   ├── test_gui/             # Automated Qt GUI integration test suite (pytest-qt)
 │   ├── test_benchmarks.py    # Performance benchmark test suite for pytest-benchmark
 │   ├── test_multitaper.py    # Unit tests for Multitaper PSD & DPSS tapers
 │   ├── test_parsers.py       # Unit tests for PM6 and REGI file parsing
@@ -214,13 +215,26 @@ uv pip install -e .
 
 ## Usage Guide
 
+### Keyboard Shortcuts
+
+| Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| `Ctrl+O` | **Load PM6 Data** | Select and ingest raw observation time series (`.PM6`) |
+| `Ctrl+L` | **Load REGI Log** | Parse transit schedule, split source sessions, & fill calibration gaps |
+| `Ctrl+R` | **Refresh Spectrogram** | Recompute bandpass filter and CWT spectrogram for active tab |
+| `Ctrl+E` | **Export Plots** | Save active view (Raw, Filtered, CWT) to high-resolution PNG or SVG |
+| `Ctrl+B` | **Batch Export** | Open batch dialog to export all sessions, channels, and spectral plots |
+| `Ctrl+,` | **Settings** | Configure CWT, Multitaper, and outlier hyperparameters |
+
+---
+
 ### 1\. Loading Data
 <div align="center">
 <img src="images/data_loading.png" alt="Loading Data" width="50%">
 </div>
 
-*   Click **"1. Load PM6 data"** to load the raw binary observation data.
-*   Click **"2. Load regi log and split sessions"** to automatically split the data into individual observation sessions and fill calibration gaps using red noise.
+*   Click **"1. Load PM6 data (Ctrl+O)"** to load the raw binary observation data.
+*   Click **"2. Load regi log and split sessions (Ctrl+L)"** to automatically split the data into individual observation sessions and fill calibration gaps using red noise.
 
 ![Example of the main window](images/main_view.png)
 
@@ -248,8 +262,8 @@ After loading the REGI log, the dataset is automatically split by observation da
 
 *   Adjust the **Filter window size (samples):** and **Outlier threshold (sigma):** spinboxes for the Hampel filter to aggressively or softly clean outliers.
 *   Toggle **Enable smoothing** to smooth the signal using the Savitzky-Golay algorithm.
-*   Select the desired **Bandpass range:** (e.g., _Small bubbles (5 - 150 s)_ or _Large clouds (150 - 600 s)_). Changing this selection automatically triggers the bandpass filter and recalculates the CWT spectrogram. You can also manually trigger a recalculation by clicking **"4. Refresh spectrogram"**.
-*   Replace highly noisy regions manually: drag the boundaries of the shaded selection region on the **Raw data** plot to cover the noise, and click **"3. Manually clean region"** to replace the selected segment with synthetic red noise. **Note:** This modification applies globally to the dataset, meaning any standalone source tabs that overlap with the cleaned time window will automatically update to reflect the cleaned data.
+*   Select the desired **Bandpass range:** (e.g., _Small bubbles (5 - 150 s)_ or _Large clouds (150 - 600 s)_). Changing this selection automatically triggers the bandpass filter and recalculates the CWT spectrogram. You can also manually trigger a recalculation by clicking **"Refresh spectrogram (Ctrl+R)"**.
+*   Replace highly noisy regions manually: drag the boundaries of the shaded selection region on the **Raw data** plot to cover the noise, and click **"Clean region"** to replace the selected segment with synthetic red noise. **Note:** This modification applies globally to the dataset, meaning any standalone source tabs that overlap with the cleaned time window will automatically update to reflect the cleaned data.
 
 
 Initial position            |  Expand selection  |  Fill selection
@@ -264,8 +278,8 @@ Initial position            |  Expand selection  |  Fill selection
 <img src="images/spectral_analysis.png" alt="Spectral Analysis" width="50%">
 </div>
 
-*   Click **"6. Spectral Analysis"** to compute the Multitaper PSD, F-Test, and Cross-Spectrum for the currently active source tab.
-*   Click **"7. Global Spectral Analysis"** to process the entire dataset.
+*   Click **"Spectral Analysis"** to compute the Multitaper PSD, F-Test, and Cross-Spectrum for the currently active source tab.
+*   Click **"Global Spectral Analysis"** to process the entire dataset.
 *   View the results in the newly opened sub-tabs: **Multitaper PSD**, **Thomson F-Test**, **Cross-Spectrum**, and **Ionospheric Drift Velocity Estimation** (which includes detected periods $T\_0$, $2T$, $3T$ and the estimated horizontal drift velocities calculated from the 20 MHz and 25 MHz beams).
 
 <table width="100%">
@@ -317,8 +331,8 @@ Initial position            |  Expand selection  |  Fill selection
 <img src="images/export.png" alt="Exporting" width="50%">
 </div>
 
-*   Use **"5. Export plots"** to save the current view (Raw, Filtered, and/or Spectrogram) to an image file. You can select which sub-plots to include.
-*   Use **"Batch Export..."** to open the batch processing window, where you can select sessions, channels, spectral bands, and which plots/logs to output. You can also choose whether to export using your manually cleaned dataset or the original unmodified data. This automatically processes and saves all requested assets (such as _Raw Signal_, _Filtered (Scintillations)_, _CWT Spectrogram_, _Multitaper PSD_, _Thomson F-Test_, _Cross-Spectrum_, and _IDVE (txt log)_) to your chosen output folder, alongside a `BatchExportSettings.txt` file containing the analysis parameters.
+*   Use **"5. Export plots (Ctrl+E)"** to save the current view (Raw, Filtered, and/or Spectrogram) to an image file. You can select which sub-plots to include.
+*   Use **"Batch Export... (Ctrl+B)"** to open the batch processing window, where you can select sessions, channels, spectral bands, and which plots/logs to output. You can also choose whether to export using your manually cleaned dataset or the original unmodified data. This automatically processes and saves all requested assets (such as _Raw Signal_, _Filtered (Scintillations)_, _CWT Spectrogram_, _Multitaper PSD_, _Thomson F-Test_, _Cross-Spectrum_, and _IDVE (txt log)_) to your chosen output folder, alongside `processing_config.json`, `provenance_manifest.json`, and `BatchExportSettings.txt` for one-click reloading and full scientific reproducibility.
 
 <div align="center">
 <img src="images/batch_export.png" alt="Batch Export" width="80%">
@@ -326,7 +340,7 @@ Initial position            |  Expand selection  |  Fill selection
 
 ### 6\. Adjusting Hyperparameters
 
-Click the **⚙ Settings** button at the bottom of the left panel to open the settings dialog, where you can fine-tune all CWT and spectral hyperparameters.
+Click the **⚙ Settings (Ctrl+,)** button at the bottom of the left panel to open the settings dialog, where you can fine-tune all CWT and spectral hyperparameters.
 
 <div align="center">
 <img src="images/settings.png" alt="Settings" width="80%">
@@ -334,14 +348,14 @@ Click the **⚙ Settings** button at the bottom of the left panel to open the se
 
 *   Use the **Preset** dropdown to load one of three built-in profiles: **Default**, **Fast Preview**, or **High Resolution**.
 *   Use **"Save to file…"** to export the current parameters to a custom JSON config.
-*   Use **"Load from file…"** to import a previously saved custom JSON config.
+*   Use **"Load from file…"** to import a previously saved custom JSON config (supports both uppercase presets and lowercase `ProcessingConfig` / provenance files).
 *   Click **"OK"** to save your changes.
 
 ---
 
 ## Configuration Parameters (`core/config.py` & `ProcessingConfig`)
 
-The processing pipeline is parameterized using the immutable `ProcessingConfig` dataclass container (`core/config.py`), preventing global mutable state bugs and ensuring reproducible parameter encapsulation across UI tabs, CLI scripts, and export workers.
+The processing pipeline is parameterized using the immutable `ProcessingConfig` dataclass container (`core/config.py`), preventing global mutable state bugs and ensuring reproducible parameter encapsulation across UI tabs, export workers, and scripts.
 
 ```python
 from core.config import ProcessingConfig
@@ -461,7 +475,7 @@ For detailed hardware environment specs, empirical benchmark tables, scaling cur
 
 To ensure complete scientific reproducibility, the suite provides a provenance tracking module (`core/provenance.py`). Each export generates a reproducible JSON audit manifest detailing:
 - Raw input file SHA-256 checksum and file size.
-- Exact application version (`1.0.0`) and git commit SHA hash.
+- Exact application version (`1.0.1`) and git commit SHA hash.
 - Full snapshot of all pipeline processing parameters (`ProcessingConfig`).
 - Full system and library runtime environment versions (`numpy`, `scipy`, `pandas`, `ssqueezepy`, `pyside6`).
 - Parser repair logs and warning history.
@@ -489,7 +503,7 @@ If you use this software suite in your scientific research or publications, plea
 @software{Zhykul_IonosphericScintillation_2026,
   author = {Zhykul, Danylo},
   title = {IonosphericScintillation: Signal Processing and Time-Frequency Analysis Suite for URAN-4 Data},
-  version = {1.0.0},
+  version = {1.0.1},
   year = {2026},
   url = {https://github.com/DanielZhicool/IonosphericScintillation},
   license = {BSD-3-Clause}

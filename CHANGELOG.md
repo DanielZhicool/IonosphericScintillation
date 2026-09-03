@@ -5,6 +5,27 @@ All notable changes to the **IonosphericScintillation** project will be document
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-03
+
+### Added
+- **Automated GUI Integration Test Suite (`pytest-qt`)**: Added test harnesses for dialog initialization, tab state transitions, background worker cancellation, and marker rendering.
+- **Keyboard Accelerators & Visual Hints**: Added standard shortcuts (`Ctrl+O`, `Ctrl+L`, `Ctrl+E`, `Ctrl+B`, `Ctrl+R`, `Ctrl+,`) visible on buttons and documented in usage tables.
+- **Bidirectional JSON Config & Preset Compatibility**: Enabled case-insensitive loading of `ProcessingConfig` JSONs, provenance manifests, and uppercase presets in `SettingsDialog`.
+- **Automatic Batch Provenance & Config Export**: Added automatic writing of `processing_config.json` and `provenance_manifest.json` into export target directories.
+- **PEP 517 Build Standards**: Configured Hatchling build system with clean entrypoint `uran4 = "gui.main_window:main"`.
+
+### Changed
+- **Streamlined User Interface**: Removed redundant numeric prefixes from group box titles and action buttons for a cleaner, modern layout.
+- **DSP Accuracy & Boundary Preservation**: Retained transit edge scintillations with zero-phase reflection padding (`tukey_alpha=0.0`) in `bandpass_filter()`.
+- **Vectorized Hampel Outlier Rejection**: Replaced Pandas rolling median with C-optimized `scipy.ndimage.median_filter()`, reducing memory usage and accelerating preprocessing.
+- **Theoretical Cross-Spectral Phase Variance**: Implemented analytical single-point phase variance $\text{Var}(\Delta\phi) = \frac{1 - \gamma^2}{2 K \gamma^2}$ replacing heuristic slope errors.
+- **Thread-Safe Matplotlib Rendering**: Background workers now use isolated `Figure` instances rather than global `pyplot` state.
+- **Standardized Plot Titles & Band Labels**: Synchronized titles across single and batch exports to standard format with physical band descriptors (`5–150 s (Small bubbles)` / `150–600 s (Large clouds)`).
+- **Complete GUI Type Safety**: Enforced 100% strict type annotations across all GUI modules under MyPy.
+- Promoted test suite to 98 unit and GUI integration tests passing cleanly.
+
+---
+
 ## [1.0.0] - 2026-07-27
 
 ### Added
