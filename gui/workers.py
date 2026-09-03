@@ -1,6 +1,16 @@
-import traceback
+"""Background Qt workers for non-blocking spectral and time-frequency signal analysis."""
 
+from __future__ import annotations
+
+import traceback
+from typing import Any
+
+import numpy as np
 from PySide6.QtCore import QThread, Signal
+
+from core.config import ProcessingConfig
+from core.signal_processing import process_signal_pipeline
+from core.spectral_analysis import run_spectral_pipeline
 
 
 class SpectralAnalysisWorker(QThread):
@@ -19,37 +29,35 @@ class SpectralAnalysisWorker(QThread):
 
     def __init__(
         self,
-        pm_signals,
-        fs,
-        signal_duration,
-        bands,
-        window_size,
-        n_sigmas,
-        apply_smoothing,
-        config=None,
-    ):
+        pm_signals: dict[str, np.ndarray],
+        fs: float,
+        signal_duration: float,
+        bands: list[tuple[str, float, float]],
+        window_size: int,
+        n_sigmas: float,
+        apply_smoothing: bool,
+        config: ProcessingConfig | None = None,
+    ) -> None:
         super().__init__()
-        self.pm_signals = pm_signals
-        self.fs = fs
-        self.signal_duration = signal_duration
-        self.bands = bands
-        self.window_size = window_size
-        self.n_sigmas = n_sigmas
-        self.apply_smoothing = apply_smoothing
-        self.config = config
+        self.pm_signals: dict[str, np.ndarray] = pm_signals
+        self.fs: float = fs
+        self.signal_duration: float = signal_duration
+        self.bands: list[tuple[str, float, float]] = bands
+        self.window_size: int = window_size
+        self.n_sigmas: float = n_sigmas
+        self.apply_smoothing: bool = apply_smoothing
+        self.config: ProcessingConfig | None = config
 
-    def run(self):
+    def run(self) -> None:
         try:
-            from core.spectral_analysis import run_spectral_pipeline
-
-            band_results = {}
+            band_results: dict[str, dict[str, Any] | None] = {}
             for i, (band_key, lowcut, highcut) in enumerate(self.bands):
                 min_period = 1.0 / lowcut
                 if self.signal_duration < min_period:
                     band_results[band_key] = None
                     continue
 
-                def prog_cb(val, current_i=i):
+                def prog_cb(val: int, current_i: int = i) -> None:
                     self.progress.emit((current_i * 100 + val) // len(self.bands))
 
                 res = run_spectral_pipeline(
@@ -87,29 +95,27 @@ class SignalAnalysisWorker(QThread):
 
     def __init__(
         self,
-        raw_signal,
-        fs,
-        lowcut,
-        highcut,
-        window_size,
-        n_sigmas,
-        apply_smoothing,
-        config=None,
-    ):
+        raw_signal: np.ndarray,
+        fs: float,
+        lowcut: float,
+        highcut: float,
+        window_size: int,
+        n_sigmas: float,
+        apply_smoothing: bool,
+        config: ProcessingConfig | None = None,
+    ) -> None:
         super().__init__()
-        self.raw_signal = raw_signal
-        self.fs = fs
-        self.lowcut = lowcut
-        self.highcut = highcut
-        self.window_size = window_size
-        self.n_sigmas = n_sigmas
-        self.apply_smoothing = apply_smoothing
-        self.config = config
+        self.raw_signal: np.ndarray = raw_signal
+        self.fs: float = fs
+        self.lowcut: float = lowcut
+        self.highcut: float = highcut
+        self.window_size: int = window_size
+        self.n_sigmas: float = n_sigmas
+        self.apply_smoothing: bool = apply_smoothing
+        self.config: ProcessingConfig | None = config
 
-    def run(self):
+    def run(self) -> None:
         try:
-            from core.signal_processing import process_signal_pipeline
-
             filtered_sig, img_data = process_signal_pipeline(
                 self.raw_signal,
                 self.fs,

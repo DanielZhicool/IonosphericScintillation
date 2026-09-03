@@ -1,12 +1,12 @@
-BTN_LOAD_PM6 = "1. Load PM6 data"
+BTN_LOAD_PM6 = "Load PM6 data (Ctrl+O)"
 LBL_PM6_NOT_LOADED = "PM6 file not loaded"
-BTN_LOAD_LOGS = "2. Load regi log and split sessions"
+BTN_LOAD_LOGS = "Load logs and split sessions (Ctrl+L)"
 CHECK_MARKERS = "Show source markers on main plot"
 CHECK_SMOOTH = "Enable smoothing"
-BTN_APPLY_NOISE = "3. Manually clean region"
+BTN_APPLY_NOISE = "Clean region"
 COMBO_BAND_ITEMS = ["Small bubbles (5 - 150 s)", "Large clouds (150 - 600 s)"]
-BTN_ANALYZE = "4. Refresh spectrogram"
-BTN_EXPORT = "5. Export plots"
+BTN_ANALYZE = "Refresh spectrogram (Ctrl+R)"
+BTN_EXPORT = "Export (Ctrl+E)"
 LABEL_DISPLAY_CHANNEL = "Displayed channel:"
 
 LABEL_BAND = "Bandpass range:"
@@ -39,12 +39,16 @@ MSG_NO_PM6_SELECTED_TITLE = "No PM6 data"
 MSG_NO_PM6_SELECTED_TEXT = "Please load PM6 data before cleaning or splitting sessions."
 
 # Spectral Analysis Tab
-BTN_SPECTRAL = "6. Spectral Analysis"
-BTN_GLOBAL_SPECTRAL = "7. Global Spectral Analysis"
+BTN_SPECTRAL = "Spectral Analysis"
+BTN_GLOBAL_SPECTRAL = "Global Spectral Analysis"
 SPECTRAL_TAB_SUFFIX = " \u27e8Spectral\u27e9"
 GLOBAL_SPECTRAL_TAB_NAME = "\u27e8Global Spectral\u27e9"
 SPECTRAL_BAND_SMALL = "Small bubbles (5\u2013150 s)"
 SPECTRAL_BAND_LARGE = "Large clouds (150\u2013600 s)"
+BAND_LABELS = {
+    "small": "Small bubbles (5\u2013150 s)",
+    "large": "Large clouds (150\u2013600 s)",
+}
 SPECTRAL_TAB_PSD_TITLE = "Multitaper PSD"
 SPECTRAL_TAB_FTEST_TITLE = "Thomson F-Test"
 

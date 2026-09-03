@@ -1,7 +1,9 @@
-"""
-SpectralTab widget for displaying Multitaper PSD, F-Test,
-Cross-Spectrum, and ionospheric drift velocity results.
-"""
+"""SpectralTab widget for displaying Multitaper PSD, F-Test, Cross-Spectrum, and ionospheric drift velocity results."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
@@ -38,16 +40,22 @@ class SpectralTab(QWidget):
         - Velocity Summary (Text Table)
     """
 
-    def __init__(self, source_name, band_results, parent=None):
+    def __init__(
+        self,
+        source_name: str,
+        band_results: Mapping[str, dict[str, Any] | None],
+        parent: QWidget | None = None,
+    ) -> None:
         """
         Args:
             source_name: e.g. "3C144".
             band_results: dict with keys ``'small'`` and ``'large'``.
                 Each value is either a results dict produced by
                 ``run_spectral_pipeline`` or ``None`` (signal too short).
+            parent: Optional parent QWidget.
         """
         super().__init__(parent)
-        self.source_name = source_name
+        self.source_name: str = source_name
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -68,7 +76,7 @@ class SpectralTab(QWidget):
     # Band sub-tab builder
     # ------------------------------------------------------------------
 
-    def _create_band_widget(self, results, band_label):
+    def _create_band_widget(self, results: dict[str, Any] | None, band_label: str) -> QWidget:
         """Build the widget for one frequency band's analysis results."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -95,26 +103,33 @@ class SpectralTab(QWidget):
         # Invert freq → period, reverse so periods are ascending
         periods = (1.0 / masked_freqs)[::-1]
 
-        period_min = 1.0 / highcut
-        period_max = 1.0 / lowcut
+        period_min = float(1.0 / highcut)
+        period_max = float(1.0 / lowcut)
 
-        # ── 1. PSD Tab (2x2 Grid) ────────────────────────────────────
-        psd_widget = pg.GraphicsLayoutWidget()
-        analysis_tabs.addTab(psd_widget, SPECTRAL_TAB_PSD_TITLE)
+        # 1. Multitaper PSD Tab
+        tab_psd = QWidget()
+        l_psd = QVBoxLayout(tab_psd)
+        l_psd.setContentsMargins(0, 0, 0, 0)
+        graph_psd = pg.GraphicsLayoutWidget()
+        l_psd.addWidget(graph_psd)
         self._build_psd_grid(
-            psd_widget,
+            graph_psd,
             results["psd"],
             periods,
             mask,
             period_min,
             period_max,
         )
+        analysis_tabs.addTab(tab_psd, SPECTRAL_TAB_PSD_TITLE)
 
-        # ── 2. F-Test Tab (2x2 Grid) ─────────────────────────────────
-        ftest_widget = pg.GraphicsLayoutWidget()
-        analysis_tabs.addTab(ftest_widget, SPECTRAL_TAB_FTEST_TITLE)
+        # 2. Thomson F-Test Tab
+        tab_ftest = QWidget()
+        l_ftest = QVBoxLayout(tab_ftest)
+        l_ftest.setContentsMargins(0, 0, 0, 0)
+        graph_ftest = pg.GraphicsLayoutWidget()
+        l_ftest.addWidget(graph_ftest)
         self._build_ftest_grid(
-            ftest_widget,
+            graph_ftest,
             results["ftest"],
             periods,
             mask,
@@ -122,27 +137,47 @@ class SpectralTab(QWidget):
             period_min,
             period_max,
         )
+        analysis_tabs.addTab(tab_ftest, SPECTRAL_TAB_FTEST_TITLE)
 
-        # ── 3. Cross-Spectrum Tab (2x2 Grid) ─────────────────────────
-        cross_widget = pg.GraphicsLayoutWidget()
-        analysis_tabs.addTab(cross_widget, "Cross-Spectrum")
-        self._build_cross_spectrum(cross_widget, results["cross"], periods, mask, period_min, period_max)
+        # 3. Cross-Spectrum Tab
+        tab_cross = QWidget()
+        l_cross = QVBoxLayout(tab_cross)
+        l_cross.setContentsMargins(0, 0, 0, 0)
+        graph_cross = pg.GraphicsLayoutWidget()
+        l_cross.addWidget(graph_cross)
+        self._build_cross_spectrum(
+            graph_cross,
+            results["cross"],
+            periods,
+            mask,
+            period_min,
+            period_max,
+        )
+        analysis_tabs.addTab(tab_cross, "Cross-Spectrum (Coherence & Phase)")
 
-        # ── 4. Velocity summary ──────────────────────────────────────
+        # 4. Velocity Summary Tab
         velocity_text = QTextEdit()
         velocity_text.setReadOnly(True)
-        velocity_text.setFontFamily("Consolas")
-        velocity_text.setPlainText(
+        velocity_text.setFontFamily("Courier New")
+        velocity_text.setText(
             self._format_velocity_table(
-                results.get("velocities", {}),
-                band_label,
+                results["velocities"],
+                band_label=band_label,
             )
         )
         analysis_tabs.addTab(velocity_text, SPECTRAL_TAB_VELOCITY_HEADER)
 
         return widget
 
-    def _build_psd_grid(self, graph, data_dict, periods, mask, p_min, p_max):
+    def _build_psd_grid(
+        self,
+        graph: pg.GraphicsLayoutWidget,
+        data_dict: dict[str, Any],
+        periods: np.ndarray,
+        mask: np.ndarray,
+        p_min: float,
+        p_max: float,
+    ) -> None:
         """Build 2x2 PSD grid — all channels in blue with Top-5 peak markers."""
         channels = [
             ("20 MHz Pol A", 0, 0),
@@ -170,6 +205,11 @@ class SpectralTab(QWidget):
             vals = 10.0 * np.log10(np.maximum(vals_linear, 1e-30))
             p.plot(periods, vals, pen=pg.mkPen("#42A5F5", width=1.0))  # uniform blue
 
+            y_min = float(np.min(vals))
+            y_max = float(np.max(vals))
+            y_span = max(y_max - y_min, 1.0)
+            p.setYRange(y_min - 0.03 * y_span, y_max + 0.18 * y_span)
+
             peaks, _ = find_peaks(vals, distance=max(1, len(vals) // 200), prominence=0.01 * np.max(vals))
             if len(peaks) > 0:
                 top_idx = sorted(peaks, key=lambda i: vals[i], reverse=True)[:5]
@@ -184,8 +224,21 @@ class SpectralTab(QWidget):
                 peak_x = [periods[i] for i in top_idx]
                 peak_y = [vals[i] for i in top_idx]
                 p.plot(peak_x, peak_y, pen=None, symbol="t", symbolPen="r", symbolBrush="r", symbolSize=10)
+                for i in top_idx:
+                    txt = pg.TextItem(text=f"{periods[i]:.1f}", color="#FF4444", anchor=(0.5, 1.3))
+                    txt.setPos(periods[i], vals[i])
+                    p.addItem(txt)
 
-    def _build_ftest_grid(self, graph, data_dict, periods, mask, freqs_full, p_min, p_max):
+    def _build_ftest_grid(
+        self,
+        graph: pg.GraphicsLayoutWidget,
+        data_dict: dict[str, Any],
+        periods: np.ndarray,
+        mask: np.ndarray,
+        freqs_full: np.ndarray,
+        p_min: float,
+        p_max: float,
+    ) -> None:
         """Build 2x2 F-Test grid matching the MATLAB reference exactly."""
         channels = [
             ("20 MHz Pol A", 0, 0),
@@ -193,9 +246,9 @@ class SpectralTab(QWidget):
             ("25 MHz Pol A", 1, 0),
             ("25 MHz Pol B", 1, 1),
         ]
-        threshold = data_dict.get("threshold", 1.0)
-        confidence_val = data_dict.get("confidence", cfg.FTEST_CONFIDENCE)
-        fdr_adjusted = data_dict.get("fdr_adjusted", False)
+        threshold = float(data_dict.get("threshold", 1.0))
+        confidence_val = float(data_dict.get("confidence", cfg.FTEST_CONFIDENCE))
+        fdr_adjusted = bool(data_dict.get("fdr_adjusted", False))
         confidence_pct = confidence_val * 100
 
         conf_str = f"{confidence_pct:.2f}% (FDR Adjusted)" if fdr_adjusted else f"{confidence_pct:g}%"
@@ -207,7 +260,7 @@ class SpectralTab(QWidget):
                 continue
 
             label = ch_name
-            T0 = data_dict.get(ch_name + "_T0", None)
+            T0 = data_dict.get(ch_name + "_T0")
 
             if T0 is not None:
                 t2, t3 = T0 / 2.0, T0 / 3.0
@@ -236,7 +289,12 @@ class SpectralTab(QWidget):
             vals = data_dict[ch_name][mask][::-1]
             p.plot(periods, vals, pen=pg.mkPen("#42A5F5", width=0.8))  # uniform blue
 
-            # Confidence threshold dashed red line
+            # Provide explicit top headroom so labels and peaks are never clipped
+            y_data_max = float(np.max(vals)) if len(vals) > 0 else 1.0
+            y_view_max = max(y_data_max, threshold) * 1.15
+            p.setYRange(0.0, y_view_max)
+
+            # Confidence threshold dashed red line anchored at 25% of X range
             thresh_line = pg.InfiniteLine(
                 pos=threshold,
                 angle=0,
@@ -248,24 +306,27 @@ class SpectralTab(QWidget):
                 f"{conf_str} Confidence Threshold (F={threshold:.2f})</div>"
             )
             thresh_label = pg.TextItem(html=thresh_html, anchor=(0, 1))
-            thresh_label.setPos(p_min + (p_max - p_min) * 0.02, threshold)
+            thresh_pos_x = p_min + (p_max - p_min) * 0.25
+            thresh_label.setPos(thresh_pos_x, threshold)
             p.addItem(thresh_label)
 
             if T0 is not None:
-                # Black vertical stem at T0
+                y_t0 = y_view_max * 0.95
+                y_harm = y_view_max * 0.90
+
+                # Vertical stem at T0
                 vl_t0 = pg.InfiniteLine(
                     pos=T0,
                     angle=90,
                     pen=pg.mkPen("w", width=2.0),
                 )
                 p.addItem(vl_t0)
-                t0_html = "<div style='font-size: 12pt; font-weight: bold; color: white;'>T₀</div>"
-                t0_label = pg.TextItem(html=t0_html, anchor=(0.5, 1))
-                t0_label.setPos(T0, p.viewRange()[1][1] if p.viewRange()[1][1] > 0 else threshold * 5)
+                t0_html = "<div style='font-size: 11pt; font-weight: bold; color: white;'>T₀</div>"
+                t0_label = pg.TextItem(html=t0_html, anchor=(0.5, 0))
+                t0_label.setPos(T0, y_t0)
                 p.addItem(t0_label)
 
                 # Red star marker at T0
-                # Find the index in the masked/reversed array closest to T0
                 t0_idx = int(np.argmin(np.abs(periods - T0)))
                 if 0 <= t0_idx < len(vals):
                     p.plot(
@@ -288,12 +349,20 @@ class SpectralTab(QWidget):
                             pen=pg.mkPen("#FF00FF", width=1.5, style=Qt.PenStyle.DashLine),
                         )
                         p.addItem(vl)
-                        hl_html = f"<div style='font-size: 11pt; font-weight: bold; color: #FF00FF;'>{harm_label}</div>"
-                        hl = pg.TextItem(html=hl_html, anchor=(0.5, 1))
-                        hl.setPos(harm_period, threshold * 2)
+                        hl_html = f"<div style='font-size: 10pt; font-weight: bold; color: #FF00FF;'>{harm_label}</div>"
+                        hl = pg.TextItem(html=hl_html, anchor=(0.5, 0))
+                        hl.setPos(harm_period, y_harm)
                         p.addItem(hl)
 
-    def _build_cross_spectrum(self, graph, cross_data, periods, mask, p_min, p_max):
+    def _build_cross_spectrum(
+        self,
+        graph: pg.GraphicsLayoutWidget,
+        cross_data: dict[str, Any],
+        periods: np.ndarray,
+        mask: np.ndarray,
+        p_min: float,
+        p_max: float,
+    ) -> None:
         """Helper to build a 2x3 grid for Cross-Spectrum matching MATLAB reference."""
         p_pwa = graph.ci.addPlot(row=0, col=0)
         p_rea = graph.ci.addPlot(row=0, col=1, title="Co-spectrum (In-phase)")
@@ -340,6 +409,9 @@ class SpectralTab(QWidget):
             p_re.plot(periods, vals_re, pen=pg.mkPen("#42A5F5", width=1.5))  # Blue
             p_im.plot(periods, vals_im, pen=pg.mkPen("#EF5350", width=1.5))  # Red
 
+            max_pow = float(np.max(vals_pow)) if len(vals_pow) > 0 else 1.0
+            p_pow.setYRange(-0.02 * max_pow, max_pow * 1.18)
+
             # Direct peak detection (Top-3 tallest distinct peaks for Cross Spectrum)
             dist = max(1, len(vals_pow) // 50)
             peaks, _ = find_peaks(vals_pow, distance=dist, prominence=0.01 * np.max(vals_pow))
@@ -357,6 +429,10 @@ class SpectralTab(QWidget):
                 peak_x = [periods[i] for i in top_indices]
                 peak_y = [vals_pow[i] for i in top_indices]
                 p_pow.plot(peak_x, peak_y, pen=None, symbol="t", symbolPen="r", symbolBrush="r", symbolSize=10)
+                for i in top_indices:
+                    txt = pg.TextItem(text=f"{periods[i]:.1f}", color="#FF4444", anchor=(0.5, 1.3))
+                    txt.setPos(periods[i], vals_pow[i])
+                    p_pow.addItem(txt)
 
                 # Add vertical lines to real and imag plots at the peak periods
                 for px in peak_x:
@@ -366,9 +442,5 @@ class SpectralTab(QWidget):
                     p_im.addItem(vl_im)
             else:
                 p_pow.setTitle(f"Pol {pol_name[-1]} (20 MHz vs 25 MHz)<br>Amplitude |Pxy|")
-
-    # ------------------------------------------------------------------
-    # Velocity table formatter
-    # ------------------------------------------------------------------
 
     _format_velocity_table = staticmethod(format_velocity_table)

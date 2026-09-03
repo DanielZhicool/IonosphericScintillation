@@ -1,4 +1,13 @@
+"""Tab widget components for raw signal inspection, filtered scintillations, and CWT spectrograms."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any
+
 import numpy as np
+import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import QRectF
 from PySide6.QtWidgets import QVBoxLayout, QWidget
@@ -9,23 +18,33 @@ from gui.plotting import TimeAxisItem
 
 
 class SignalTab(QWidget):
-    """Widget for a signal tab; holds a DataFrame for a target."""
+    """Widget for a signal tab; holds a DataFrame slice for an observation or source transit."""
 
-    def __init__(self, df_slice, start_datetime, tab_name=MAIN_TAB_NAME, fs=1.0, full_datetime_series=None):
+    def __init__(
+        self,
+        df_slice: pd.DataFrame,
+        start_datetime: datetime,
+        tab_name: str = MAIN_TAB_NAME,
+        fs: float = 1.0,
+        full_datetime_series: Sequence[Any] | np.ndarray | None = None,
+    ) -> None:
         super().__init__()
-        self.df_slice = df_slice.copy()
-        self.time_sec = self.df_slice["Time_sec"].values
-        self.fs = fs
-        self.full_datetime_series = (
-            full_datetime_series if full_datetime_series is not None else self.df_slice["Datetime"].values
+        self.df_slice: pd.DataFrame = df_slice.copy()
+        self.time_sec: np.ndarray = np.asarray(self.df_slice["Time_sec"].to_numpy(), dtype=float)
+        self.fs: float = fs
+        self.full_datetime_series: Sequence[Any] | np.ndarray = (
+            full_datetime_series
+            if full_datetime_series is not None
+            else np.asarray(self.df_slice["Datetime"].to_numpy())
         )
-        self.start_datetime = start_datetime
-        self.tab_name = tab_name  # remember tab name
-        self.session_markers = []  # store session markers and labels
-        self.day_markers = []  # store day markers
+        self.start_datetime: datetime = start_datetime
+        self.tab_name: str = tab_name  # remember tab name
+        self.session_markers: list[Any] = []  # store session markers and labels
+        self.day_markers: list[Any] = []  # store day markers
+        self.last_analysis_state: dict[str, Any] | None = None
 
-        self.current_channel = "P1_20A"
-        self.raw_signal = self.df_slice[self.current_channel].values
+        self.current_channel: str = "P1_20A"
+        self.raw_signal: np.ndarray = np.asarray(self.df_slice[self.current_channel].to_numpy(), dtype=float)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -39,7 +58,7 @@ class SignalTab(QWidget):
 
         # Raw data plot (tab name in title)
         axis_p1 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation="bottom")
-        self.p1 = self.graph_widget.ci.addPlot(
+        self.p1: Any = self.graph_widget.ci.addPlot(
             title=RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=self.current_channel),
             axisItems={"bottom": axis_p1},
             row=1,
@@ -50,14 +69,16 @@ class SignalTab(QWidget):
         self.curve_raw = self.p1.plot(self.time_sec, self.raw_signal, pen="b")
 
         self.region = pg.LinearRegionItem()
-        region_end = min(self.time_sec[0] + 100, self.time_sec[-1])
+        region_end = min(float(self.time_sec[0] + 100), float(self.time_sec[-1]))
         self.region.setRegion([self.time_sec[0], region_end])
         self.region.setZValue(10)
         self.p1.addItem(self.region, ignoreBounds=True)
 
         # Ionospheric scintillations
         axis_p2 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation="bottom")
-        self.p2 = self.graph_widget.ci.addPlot(title=IONOSPHERIC_TITLE, axisItems={"bottom": axis_p2}, row=2, col=0)
+        self.p2: Any = self.graph_widget.ci.addPlot(
+            title=IONOSPHERIC_TITLE, axisItems={"bottom": axis_p2}, row=2, col=0
+        )
         self.p2.showGrid(x=True, y=True)
         self.p2.setXLink(self.p1)
         self.p2.setLabel("left", "Amplitude")
@@ -65,7 +86,9 @@ class SignalTab(QWidget):
 
         # Spectrogram
         axis_p3 = TimeAxisItem(self.start_datetime, datetime_series=self.full_datetime_series, orientation="bottom")
-        self.p3 = self.graph_widget.ci.addPlot(title=SPECTROGRAM_TITLE, axisItems={"bottom": axis_p3}, row=3, col=0)
+        self.p3: Any = self.graph_widget.ci.addPlot(
+            title=SPECTROGRAM_TITLE, axisItems={"bottom": axis_p3}, row=3, col=0
+        )
         self.p3.setXLink(self.p1)
         if cfg.CWT_SHOW_PERIOD:
             self.p3.setLabel("left", "Period", units="s")
@@ -76,7 +99,7 @@ class SignalTab(QWidget):
         self.p3.addItem(self.img_spec)
 
         cmap = pg.colormap.get("viridis")
-        self.img_spec.setColorMap(cmap)
+        self.img_spec.setColorMap(cmap if cmap is not None else "viridis")
 
         self.cbar = pg.ColorBarItem(colorMap=cmap)
         self.cbar.setImageItem(self.img_spec, insert_in=self.p3)
@@ -86,14 +109,14 @@ class SignalTab(QWidget):
         else:
             self.cbar.getAxis("right").setLabel("Power", units="dB")
 
-    def _update_title(self):
+    def _update_title(self) -> None:
         """Refresh the global metadata title at the top of the plot area."""
         date_str = self.start_datetime.strftime("%Y-%m-%d") if self.start_datetime else ""
         source = self.tab_name if self.tab_name != MAIN_TAB_NAME else "Full Overview"
         ch = self.current_channel
         self.title_label.setText(f"<b>{source}</b>  |  {date_str}  |  Channel: {ch}", color="#CCCCCC")
 
-    def set_channel(self, channel_name, force=False):
+    def set_channel(self, channel_name: str, force: bool = False) -> None:
         if (
             not force
             and getattr(self, "current_channel", None) == channel_name
@@ -103,7 +126,7 @@ class SignalTab(QWidget):
             return
 
         self.current_channel = channel_name
-        self.raw_signal = self.df_slice[channel_name].values
+        self.raw_signal = np.asarray(self.df_slice[channel_name].to_numpy(), dtype=float)
 
         # Update sub-plot title and global metadata title
         self.p1.setTitle(RAW_DATA_TITLE_TEMPLATE.format(tab=self.tab_name, channel=channel_name))
@@ -115,10 +138,10 @@ class SignalTab(QWidget):
         self.img_spec.setImage(np.zeros((1, 1)), autoLevels=False)
         self.last_analysis_state = None
 
-    def update_raw(self, df_updated):
+    def update_raw(self, df_updated: pd.DataFrame) -> None:
         self.df_slice = df_updated.copy()
-        self.time_sec = self.df_slice["Time_sec"].values
-        self.full_datetime_series = self.df_slice["Datetime"].values
+        self.time_sec = np.asarray(self.df_slice["Time_sec"].to_numpy(), dtype=float)
+        self.full_datetime_series = np.asarray(self.df_slice["Datetime"].to_numpy())
         # Update TimeAxisItem references
         for p in [self.p1, self.p2, self.p3]:
             axis = p.getAxis("bottom")
@@ -126,17 +149,17 @@ class SignalTab(QWidget):
                 axis.datetime_series = self.full_datetime_series
         self.set_channel(self.current_channel, force=True)
 
-    def update_filtered(self, filtered_signal):
+    def update_filtered(self, filtered_signal: np.ndarray) -> None:
         self.curve_filtered.setData(self.time_sec, filtered_signal)
         self.p2.enableAutoRange(axis="y")
         self.p2.autoRange()
 
-    def update_spectrogram(self, img_data, lowcut, highcut):
-        img_min = np.nanmin(img_data)
+    def update_spectrogram(self, img_data: np.ndarray, lowcut: float, highcut: float) -> None:
+        img_min = float(np.nanmin(img_data))
         if cfg.CWT_SHOW_LINEAR_AMP:
-            img_max = np.nanpercentile(img_data, 99.5) if not np.all(np.isnan(img_data)) else 1.0
+            img_max = float(np.nanpercentile(img_data, 99.5)) if not np.all(np.isnan(img_data)) else 1.0
         else:
-            img_max = np.nanmax(img_data)
+            img_max = float(np.nanmax(img_data))
 
         if np.isnan(img_min) or np.isnan(img_max):
             img_min, img_max = 0.0, 1.0
@@ -149,9 +172,7 @@ class SignalTab(QWidget):
         source = self.tab_name if self.tab_name != "Full Overview" else "Full Overview"
         self.p3.setTitle(f"CWT Spectrogram - {source} ({self.current_channel})")
 
-        # CRITICAL: The ColorBarItem owns the level state and overrides setImage(levels=...).
-        # We must set levels on the colorbar explicitly or the first render will use its
-        # default [0,1] range, causing solid purple (or yellow) until recalculate is pressed.
+        # Set levels on colorbar explicitly
         self.cbar.setLevels((img_min, img_max))
 
         # Map image to its real range (Frequency vs. Period)
@@ -166,5 +187,7 @@ class SignalTab(QWidget):
         self.img_spec.setImage(img_data_to_plot, autoLevels=False)
 
         y_height = y_max - y_min
-        self.img_spec.setRect(QRectF(self.time_sec[0], y_min, self.time_sec[-1] - self.time_sec[0], y_height))
+        self.img_spec.setRect(
+            QRectF(float(self.time_sec[0]), y_min, float(self.time_sec[-1] - self.time_sec[0]), y_height)
+        )
         self.p3.setYRange(y_min, y_max)

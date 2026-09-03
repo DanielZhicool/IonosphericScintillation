@@ -1,10 +1,18 @@
-import os
+"""Batch export dialog and worker thread for URAN-4 observational data."""
+
+from __future__ import annotations
+
+import json
 import traceback
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -19,18 +27,19 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 from scipy.signal import find_peaks
 
 import core.config as cfg
 from core.signal_processing import process_signal_pipeline
 from core.spectral_analysis import run_spectral_pipeline
-from gui.constants import CHANNELS
+from gui.constants import BAND_LABELS, CHANNELS
 from gui.spectral_tab import SpectralTab
 
 
 class BatchExportWorker(QThread):
-    """Background thread to process and export plots to avoid freezing UI."""
+    """Background thread to process and export plots without freezing the GUI."""
 
     progress = Signal(int, str)  # percentage, status_text
     finished_ok = Signal(int)  # number of files saved
@@ -38,56 +47,56 @@ class BatchExportWorker(QThread):
 
     def __init__(
         self,
-        df_pm6,
-        start_datetime,
-        fs,
-        window_size,
-        n_sigmas,
-        apply_smoothing,
-        selected_sessions,
-        all_sessions,
-        selected_channels,
-        graphs_config,
-        output_dir,
-        config=None,
-    ):
+        df_pm6: pd.DataFrame,
+        start_datetime: pd.Timestamp | datetime,
+        fs: float,
+        window_size: int,
+        n_sigmas: float,
+        apply_smoothing: bool,
+        selected_sessions: list[dict[str, Any]],
+        all_sessions: list[dict[str, Any]],
+        selected_channels: list[str],
+        graphs_config: dict[str, Any],
+        output_dir: str,
+        config: cfg.ProcessingConfig | None = None,
+    ) -> None:
         super().__init__()
-        self.df_pm6 = df_pm6
-        self.start_datetime = start_datetime
-        self.fs = fs
-        self.window_size = window_size
-        self.n_sigmas = n_sigmas
-        self.apply_smoothing = apply_smoothing
-        self.selected_sessions = selected_sessions
-        self.all_sessions = all_sessions
-        self.selected_channels = selected_channels
-        self.graphs_config = graphs_config
-        self.output_dir = output_dir
-        self.config = config
-        self._is_cancelled = False
+        self.df_pm6: pd.DataFrame = df_pm6
+        self.start_datetime: pd.Timestamp | datetime = start_datetime
+        self.fs: float = fs
+        self.window_size: int = window_size
+        self.n_sigmas: float = n_sigmas
+        self.apply_smoothing: bool = apply_smoothing
+        self.selected_sessions: list[dict[str, Any]] = selected_sessions
+        self.all_sessions: list[dict[str, Any]] = all_sessions
+        self.selected_channels: list[str] = selected_channels
+        self.graphs_config: dict[str, Any] = graphs_config
+        self.output_dir: str = output_dir
+        self.config: cfg.ProcessingConfig | None = config
+        self._is_cancelled: bool = False
 
         # Determine bands based on selection
-        band_sel = graphs_config.get("band_selection", "Both")
+        band_sel = str(graphs_config.get("band_selection", "Both"))
         all_bands = [
             ("5-150s", 1.0 / 150.0, 1.0 / 5.0),
             ("150-600s", 1.0 / 600.0, 1.0 / 150.0),
         ]
         if "Small" in band_sel:
-            self.bands = [all_bands[0]]
+            self.bands: list[tuple[str, float, float]] = [all_bands[0]]
         elif "Large" in band_sel:
             self.bands = [all_bands[1]]
         else:
             self.bands = all_bands
 
-    def cancel(self):
+    def cancel(self) -> None:
+        """Flag the background worker for cancellation."""
         self._is_cancelled = True
 
-    def run(self):
+    def run(self) -> None:
+        """Execute the multi-channel and multi-session export pipeline."""
         try:
             # Save batch configuration settings
             if self.selected_sessions:
-                import json
-
                 conf = self.config if self.config is not None else cfg.ProcessingConfig()
                 settings = {
                     "window_size": self.window_size,
@@ -107,12 +116,13 @@ class BatchExportWorker(QThread):
                         "pchip_factor": conf.pchip_factor,
                     },
                 }
-                with open(os.path.join(self.output_dir, "BatchExportSettings.txt"), "w") as f:
-                    f.write("Batch Export Settings\n")
-                    f.write("=====================\n")
-                    f.write(json.dumps(settings, indent=4))
+                settings_file = Path(self.output_dir) / "BatchExportSettings.txt"
+                settings_file.write_text(
+                    "Batch Export Settings\n=====================\n" + json.dumps(settings, indent=4),
+                    encoding="utf-8",
+                )
 
-            # Count spectral tasks (one per session per band if any spectral plot is requested)
+            # Count spectral tasks
             needs_spectral = any(self.graphs_config.get(k, False) for k in ("psd", "ftest", "cross", "idve"))
             spectral_tasks = len(self.selected_sessions) * len(self.bands) if needs_spectral else 0
             total_tasks = len(self.selected_sessions) * len(self.selected_channels) * len(self.bands) + spectral_tasks
@@ -123,27 +133,37 @@ class BatchExportWorker(QThread):
                 if self._is_cancelled:
                     break
 
-                s_idx, e_idx, target = int(session["start"]), int(session["end"]), session["target"]
+                s_idx = int(session["start"])
+                e_idx = int(session["end"])
+                target = str(session["target"])
 
                 if s_idx >= e_idx:
                     continue
 
                 df_slice = self.df_pm6.iloc[s_idx:e_idx]
-                time_sec = df_slice["Time_sec"].values
+                time_sec = np.asarray(df_slice["Time_sec"].to_numpy(), dtype=float)
                 time_h = time_sec / 3600.0
                 signal_duration = len(df_slice) / self.fs
 
                 session_dt = self.df_pm6["Datetime"].iloc[s_idx]
                 date_str = session_dt.strftime("%Y%m%d")
 
-                spectral_results = None
+                spectral_results: dict[str, Any] | None = None
 
                 if needs_spectral:
                     pm_signals = {
-                        "20 MHz Pol A": df_slice["P1_20A"].values - df_slice["M1_20A"].values,
-                        "20 MHz Pol B": df_slice["P2_20B"].values - df_slice["M2_20B"].values,
-                        "25 MHz Pol A": df_slice["P3_25A"].values - df_slice["M3_25A"].values,
-                        "25 MHz Pol B": df_slice["P4_25B"].values - df_slice["M4_25B"].values,
+                        "20 MHz Pol A": np.asarray(
+                            df_slice["P1_20A"].to_numpy() - df_slice["M1_20A"].to_numpy(), dtype=float
+                        ),
+                        "20 MHz Pol B": np.asarray(
+                            df_slice["P2_20B"].to_numpy() - df_slice["M2_20B"].to_numpy(), dtype=float
+                        ),
+                        "25 MHz Pol A": np.asarray(
+                            df_slice["P3_25A"].to_numpy() - df_slice["M3_25A"].to_numpy(), dtype=float
+                        ),
+                        "25 MHz Pol B": np.asarray(
+                            df_slice["P4_25B"].to_numpy() - df_slice["M4_25B"].to_numpy(), dtype=float
+                        ),
                     }
 
                     self.progress.emit(
@@ -151,7 +171,7 @@ class BatchExportWorker(QThread):
                         f"Running spectral analysis for {target} ({date_str})...",
                     )
 
-                    band_results = {}
+                    band_results: dict[str, Any] = {}
                     for band_key, lowcut, highcut in self.bands:
                         if self._is_cancelled:
                             break
@@ -171,7 +191,7 @@ class BatchExportWorker(QThread):
                             band_results[band_key] = res
                     spectral_results = band_results
 
-                # Process Spectral Exports per session (cross-channel)
+                # Process Spectral Exports per session
                 if needs_spectral and spectral_results:
                     for band_key, res in spectral_results.items():
                         if res is None:
@@ -187,14 +207,15 @@ class BatchExportWorker(QThread):
                             ("25 MHz Pol B", 1, 1),
                         ]
                         safe_target = target.replace("/", "-").replace(" ", "_")
+                        band_label = BAND_LABELS.get(band_key, band_key)
 
                         # 1. Multitaper PSD
                         if self.graphs_config.get("psd", False):
                             fig = Figure(figsize=(14, 10), constrained_layout=True)
                             axes = fig.subplots(2, 2)
                             fig.suptitle(
-                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  PSD ({band_key})",
-                                fontsize=14,
+                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  Multitaper PSD  |  Band: {band_label}",
+                                fontsize=13,
                                 fontweight="bold",
                             )
                             for ch_name, r, c in chs:
@@ -202,10 +223,15 @@ class BatchExportWorker(QThread):
                                 if ch_name in res["psd"]:
                                     vals_linear = res["psd"][ch_name][mask][::-1]
                                     vals = 10.0 * np.log10(np.maximum(vals_linear, 1e-30))
-                                    ax.plot(periods, vals, color="#42A5F5", linewidth=1.0)
+                                    ax.plot(periods, vals, color="#1E88E5", linewidth=1.0)
                                     ax.set_xlabel("Period (Sec)")
                                     ax.set_ylabel("Spectral Power (dB)")
-                                    ax.grid(True, alpha=0.3)
+                                    ax.grid(True, alpha=0.3, linestyle=":")
+
+                                    y_min = float(np.min(vals))
+                                    y_max = float(np.max(vals))
+                                    y_span = max(y_max - y_min, 1.0)
+                                    ax.set_ylim(y_min - 0.03 * y_span, y_max + 0.18 * y_span)
 
                                     peaks, _ = find_peaks(
                                         vals, distance=max(1, len(vals) // 200), prominence=0.01 * np.max(vals)
@@ -218,18 +244,31 @@ class BatchExportWorker(QThread):
                                             f"{ch_name}\nTop 5 periods (s): {peaks_str}",
                                             color="darkred",
                                             fontweight="bold",
+                                            fontsize=10,
                                         )
                                         ax.plot(
                                             [periods[i] for i in top_idx],
                                             [vals[i] for i in top_idx],
                                             "rv",
-                                            markersize=8,
+                                            markersize=7,
                                         )
+                                        offset = 0.035 * y_span
+                                        for i in top_idx:
+                                            ax.text(
+                                                periods[i],
+                                                vals[i] + offset,
+                                                f"{periods[i]:.1f}",
+                                                color="red",
+                                                ha="center",
+                                                va="bottom",
+                                                fontsize=8,
+                                            )
                                     else:
-                                        ax.set_title(ch_name)
-                            fig.savefig(
-                                os.path.join(self.output_dir, f"{date_str}_{safe_target}_PSD_{band_key}.png"), dpi=200
-                            )
+                                        ax.set_title(ch_name, fontsize=10, fontweight="bold")
+                                else:
+                                    ax.set_title(ch_name, fontsize=10)
+                            out_file = Path(self.output_dir) / f"{date_str}_{safe_target}_PSD_{band_key}.png"
+                            fig.savefig(str(out_file), dpi=200)
                             saved_count += 1
 
                         # 2. Thomson F-Test
@@ -237,94 +276,92 @@ class BatchExportWorker(QThread):
                             fig = Figure(figsize=(14, 10), constrained_layout=True)
                             axes = fig.subplots(2, 2)
                             fig.suptitle(
-                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  F-Test ({band_key})",
-                                fontsize=14,
+                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  Thomson F-Test  |  Band: {band_label}",
+                                fontsize=13,
                                 fontweight="bold",
                             )
-                            threshold = res["ftest"].get("threshold", 1.0)
+                            threshold = float(res["ftest"].get("threshold", 1.0))
                             for ch_name, r, c in chs:
                                 ax = axes[r, c]
                                 if ch_name in res["ftest"]:
                                     vals = res["ftest"][ch_name][mask][::-1]
-                                    ax.plot(periods, vals, color="#42A5F5", linewidth=0.8)
-                                    ax.axhline(threshold, color="r", linestyle="--", alpha=0.7)
-                                    conf_val = res["ftest"].get("confidence", cfg.FTEST_CONFIDENCE)
-                                    fdr_adj = res["ftest"].get("fdr_adjusted", False)
-                                    conf_pct = conf_val * 100
-                                    conf_str = f"{conf_pct:.2f}% (FDR Adjusted)" if fdr_adj else f"{conf_pct:g}%"
-                                    p_min, p_max = min(periods), max(periods)
-                                    ax.text(
-                                        p_min + (p_max - p_min) * 0.02,
+                                    ax.plot(periods, vals, color="#1E88E5", linewidth=1.0)
+                                    ax.axhline(
                                         threshold,
-                                        f"{conf_str} Confidence Threshold (F={threshold:.2f})",
-                                        color="r",
-                                        fontweight="bold",
+                                        color="red",
+                                        linestyle="--",
+                                        alpha=0.8,
+                                    )
+                                    ax.text(
+                                        0.25,
+                                        threshold,
+                                        f"99% Confidence Threshold ({threshold:.2f})",
+                                        color="red",
                                         va="bottom",
                                         ha="left",
-                                        fontsize=10,
+                                        fontsize=9,
+                                        fontweight="bold",
+                                        transform=ax.get_yaxis_transform(),
                                     )
 
-                                    T0 = res["ftest"].get(ch_name + "_T0", None)
-                                    if T0:
+                                    t0_raw = res["ftest"].get(f"{ch_name}_T0")
+                                    T0 = float(t0_raw) if t0_raw is not None else 0.0
+                                    if T0 > 0:
                                         t2, t3 = T0 / 2.0, T0 / 3.0
-                                        title_str = f"{ch_name}\nT0 = {T0:.1f} s"
-                                        y_max = max(vals) if len(vals) > 0 else threshold
-
-                                        if min(periods) <= t2 <= max(periods):
-                                            title_str += f" | 2T: {t2:.1f} s"
-                                            ax.axvline(t2, color="m", linestyle="--", alpha=0.5)
-                                            ax.text(
-                                                t2,
-                                                threshold + (y_max - threshold) * 0.1,
-                                                "2T",
-                                                color="m",
-                                                ha="center",
-                                                va="bottom",
-                                                fontsize=10,
-                                                fontweight="bold",
-                                            )
-
-                                        if min(periods) <= t3 <= max(periods):
-                                            title_str += f" | 3T: {t3:.1f} s"
-                                            ax.axvline(t3, color="m", linestyle="--", alpha=0.5)
-                                            ax.text(
-                                                t3,
-                                                threshold + (y_max - threshold) * 0.1,
-                                                "3T",
-                                                color="m",
-                                                ha="center",
-                                                va="bottom",
-                                                fontsize=10,
-                                                fontweight="bold",
-                                            )
-
-                                        ax.set_title(title_str, color="darkblue")
+                                        ax.set_title(
+                                            f"{ch_name}\nT₀ = {T0:.1f} s | 2T: {t2:.1f} s | 3T: {t3:.1f} s",
+                                            color="darkblue",
+                                            fontweight="bold",
+                                            fontsize=10,
+                                        )
                                         ax.axvline(T0, color="k", linewidth=1.5)
-
-                                        # Add label for T0
+                                        y_max = float(np.max(vals)) if len(vals) > 0 else 1.0
+                                        ax.plot(T0, y_max, "r*", markersize=10)
                                         ax.text(
                                             T0,
-                                            y_max,
-                                            "T0",
+                                            0.90,
+                                            "T₀",
                                             color="k",
                                             ha="center",
                                             va="bottom",
-                                            fontsize=10,
+                                            fontsize=9,
                                             fontweight="bold",
+                                            transform=ax.get_xaxis_transform(),
                                         )
-
-                                        t0_idx = int(np.argmin(np.abs(periods - T0)))
-                                        if 0 <= t0_idx < len(vals):
-                                            ax.plot([periods[t0_idx]], [vals[t0_idx]], "r*", markersize=12)
+                                        if t2 >= periods[0]:
+                                            ax.axvline(t2, color="magenta", linestyle="--", linewidth=1.0, alpha=0.7)
+                                            ax.text(
+                                                t2,
+                                                0.86,
+                                                "2T",
+                                                color="magenta",
+                                                ha="center",
+                                                va="top",
+                                                fontsize=8,
+                                                fontweight="bold",
+                                                transform=ax.get_xaxis_transform(),
+                                            )
+                                        if t3 >= periods[0]:
+                                            ax.axvline(t3, color="magenta", linestyle="--", linewidth=1.0, alpha=0.7)
+                                            ax.text(
+                                                t3,
+                                                0.86,
+                                                "3T",
+                                                color="magenta",
+                                                ha="center",
+                                                va="top",
+                                                fontsize=8,
+                                                fontweight="bold",
+                                                transform=ax.get_xaxis_transform(),
+                                            )
                                     else:
-                                        ax.set_title(ch_name)
+                                        ax.set_title(ch_name, fontsize=10, fontweight="bold")
 
                                     ax.set_xlabel("Period (Sec)")
                                     ax.set_ylabel("F-Statistic")
-                                    ax.grid(True, alpha=0.3)
-                            fig.savefig(
-                                os.path.join(self.output_dir, f"{date_str}_{safe_target}_FTest_{band_key}.png"), dpi=200
-                            )
+                                    ax.grid(True, alpha=0.3, linestyle=":")
+                            out_file = Path(self.output_dir) / f"{date_str}_{safe_target}_FTest_{band_key}.png"
+                            fig.savefig(str(out_file), dpi=200)
                             saved_count += 1
 
                         # 3. Cross-Spectrum
@@ -332,8 +369,8 @@ class BatchExportWorker(QThread):
                             fig = Figure(figsize=(18, 10), constrained_layout=True)
                             axes = fig.subplots(2, 3)
                             fig.suptitle(
-                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  Cross-Spectrum ({band_key})",
-                                fontsize=14,
+                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  Cross-Spectrum & Phase  |  Band: {band_label}",
+                                fontsize=13,
                                 fontweight="bold",
                             )
                             cross_data = res["cross"]
@@ -361,6 +398,9 @@ class BatchExportWorker(QThread):
                                     if r == 0:
                                         ax_im.set_title("Quadrature spectrum (Phase shift)")
 
+                                    max_pow = float(np.max(vals_pow)) if len(vals_pow) > 0 else 1.0
+                                    ax_pow.set_ylim(-0.02 * max_pow, max_pow * 1.18)
+
                                     dist = max(1, len(vals_pow) // 50)
                                     peaks, _ = find_peaks(vals_pow, distance=dist, prominence=0.01 * np.max(vals_pow))
                                     if len(peaks) > 0:
@@ -370,6 +410,8 @@ class BatchExportWorker(QThread):
                                         ax_pow.set_title(
                                             f"{pol_name} (20 vs 25 MHz)\nTop 3 periods (s): {peaks_str}",
                                             color="darkred",
+                                            fontweight="bold",
+                                            fontsize=10,
                                         )
                                         ax_pow.plot(
                                             [periods[i] for i in top_idx],
@@ -377,28 +419,37 @@ class BatchExportWorker(QThread):
                                             "rv",
                                             markersize=8,
                                         )
+                                        for i in top_idx:
+                                            ax_pow.text(
+                                                periods[i],
+                                                vals_pow[i] + max_pow * 0.035,
+                                                f"{periods[i]:.1f}",
+                                                color="red",
+                                                ha="center",
+                                                va="bottom",
+                                                fontsize=8,
+                                            )
                                         for px in top_periods:
                                             ax_re.axvline(px, color="r", linestyle=":", alpha=0.7)
                                             ax_im.axvline(px, color="r", linestyle=":", alpha=0.7)
                                     else:
-                                        ax_pow.set_title(f"{pol_name} (20 vs 25 MHz)")
+                                        ax_pow.set_title(f"{pol_name} (20 vs 25 MHz)", fontsize=10, fontweight="bold")
 
                                     for ax in [ax_pow, ax_re, ax_im]:
                                         ax.set_xlabel("Period (Sec)")
-                                        ax.grid(True, alpha=0.3)
-                            fig.savefig(
-                                os.path.join(self.output_dir, f"{date_str}_{safe_target}_Cross_{band_key}.png"), dpi=200
-                            )
+                                        ax.grid(True, alpha=0.3, linestyle=":")
+                            out_file = Path(self.output_dir) / f"{date_str}_{safe_target}_CrossSpectrum_{band_key}.png"
+                            fig.savefig(str(out_file), dpi=200)
                             saved_count += 1
 
                         # 4. IDVE txt log
                         if self.graphs_config.get("idve", False):
                             txt = SpectralTab._format_velocity_table(res.get("velocities", {}), band_key)
-                            with open(
-                                os.path.join(self.output_dir, f"{date_str}_{safe_target}_IDVE_{band_key}.txt"), "w"
-                            ) as f:
-                                f.write(f"Target: {target} | Date: {session_dt.strftime('%Y-%m-%d')}\n\n")
-                                f.write(txt)
+                            out_file = Path(self.output_dir) / f"{date_str}_{safe_target}_IDVE_{band_key}.txt"
+                            out_file.write_text(
+                                f"Target: {target} | Date: {session_dt.strftime('%Y-%m-%d')}\n\n{txt}",
+                                encoding="utf-8",
+                            )
                             saved_count += 1
                         tasks_done += 1
 
@@ -407,7 +458,7 @@ class BatchExportWorker(QThread):
                     if self._is_cancelled:
                         break
 
-                    raw_signal = df_slice[channel].values
+                    raw_signal = np.asarray(df_slice[channel].to_numpy(), dtype=float)
 
                     for band_key, cwt_low, cwt_high in self.bands:
                         self.progress.emit(
@@ -415,12 +466,11 @@ class BatchExportWorker(QThread):
                             f"Processing {target} | {channel} | {date_str} | {band_key}",
                         )
 
-                        # Need CWT/Filtering?
-                        needs_filtered = self.graphs_config.get("filtered", False)
-                        needs_spec = self.graphs_config.get("spectrogram", False)
+                        needs_filtered = bool(self.graphs_config.get("filtered", False))
+                        needs_spec = bool(self.graphs_config.get("spectrogram", False))
 
-                        filtered_sig = None
-                        img_data = None
+                        filtered_sig: np.ndarray | None = None
+                        img_data: np.ndarray | None = None
 
                         if needs_filtered or needs_spec:
                             f_sig, i_data = process_signal_pipeline(
@@ -438,8 +488,7 @@ class BatchExportWorker(QThread):
                             filtered_sig = f_sig
                             img_data = i_data
 
-                        # Plotting Time Domain
-                        time_plots = []
+                        time_plots: list[str] = []
                         if self.graphs_config.get("raw", False):
                             time_plots.append("raw")
                         if needs_filtered:
@@ -454,8 +503,8 @@ class BatchExportWorker(QThread):
                             axes = [sub] if n == 1 else list(sub)
 
                             fig.suptitle(
-                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  {channel}  |  {band_key}",
-                                fontsize=14,
+                                f"{target}  |  {session_dt.strftime('%Y-%m-%d')}  |  {channel}  |  Band: {band_label}",
+                                fontsize=13,
                                 fontweight="bold",
                             )
 
@@ -474,13 +523,13 @@ class BatchExportWorker(QThread):
                                 if filtered_sig is not None:
                                     ax.plot(time_h, filtered_sig, color="seagreen", linewidth=0.6)
                                 ax.set_ylabel("Amplitude")
-                                ax.set_title(f"Filtered Signal (Scintillations, {band_key})")
+                                ax.set_title(f"Filtered Signal (Scintillations: {band_label})")
                                 ax.grid(True, alpha=0.3)
 
                             if "spectrogram" in time_plots:
                                 ax = axes[ax_idx]
                                 ax_idx += 1
-                                t0, t1 = time_h[0], time_h[-1]
+                                t0, t1 = float(time_h[0]), float(time_h[-1])
                                 if img_data is not None:
                                     if cfg.CWT_SHOW_PERIOD:
                                         plot_img = img_data.T
@@ -493,15 +542,15 @@ class BatchExportWorker(QThread):
 
                                     cbar_label = "Wavelet Amplitude" if cfg.CWT_SHOW_LINEAR_AMP else "Power (dB)"
                                     vmax = (
-                                        np.nanpercentile(plot_img, 99.5)
+                                        float(np.nanpercentile(plot_img, 99.5))
                                         if cfg.CWT_SHOW_LINEAR_AMP
-                                        else np.nanmax(plot_img)
+                                        else float(np.nanmax(plot_img))
                                     )
                                     im = ax.imshow(
                                         plot_img,
                                         aspect="auto",
                                         origin="lower",
-                                        extent=[t0, t1, y_min, y_max],
+                                        extent=(t0, t1, y_min, y_max),
                                         cmap="viridis",
                                         vmin=0.0 if cfg.CWT_SHOW_LINEAR_AMP else None,
                                         vmax=vmax,
@@ -522,31 +571,32 @@ class BatchExportWorker(QThread):
 
                             for ax in axes:
                                 if target == "Full Overview":
-                                    df_pm6_original_time = (
-                                        (self.df_pm6["Datetime"] - self.start_datetime).dt.total_seconds().values
+                                    df_pm6_original_time = np.asarray(
+                                        (self.df_pm6["Datetime"] - self.start_datetime).dt.total_seconds().to_numpy(),
+                                        dtype=float,
                                     )
                                     if self.graphs_config.get("markers", False):
                                         for ms in self.all_sessions:
                                             if ms["target"] != "Full Overview":
-                                                s_idx = int(ms["start"])
-                                                e_idx = int(ms["end"])
+                                                s_s_idx = int(ms["start"])
+                                                s_e_idx = int(ms["end"])
                                                 if (
-                                                    0 <= s_idx < len(df_pm6_original_time)
-                                                    and 0 <= e_idx <= len(df_pm6_original_time)
-                                                    and s_idx < e_idx
+                                                    0 <= s_s_idx < len(df_pm6_original_time)
+                                                    and 0 <= s_e_idx <= len(df_pm6_original_time)
+                                                    and s_s_idx < s_e_idx
                                                 ):
-                                                    s_sec = float(df_pm6_original_time[s_idx])
+                                                    s_sec = float(df_pm6_original_time[s_s_idx])
                                                     e_sec = float(
-                                                        df_pm6_original_time[min(e_idx, len(df_pm6_original_time) - 1)]
+                                                        df_pm6_original_time[
+                                                            min(s_e_idx, len(df_pm6_original_time) - 1)
+                                                        ]
                                                     )
                                                     s_h = s_sec / 3600.0
                                                     e_h = e_sec / 3600.0
                                                     mid_h = (s_h + e_h) / 2.0
                                                     y_min, y_max = ax.get_ylim()
-                                                    # Determine face alpha based on whether it is a spectrogram
                                                     is_spec = "spectrogram" in ax.get_title().lower()
                                                     face_alpha = 0.25 if is_spec else 0.15
-                                                    # Draw red shaded region with strong borders
                                                     ax.axvspan(
                                                         s_h,
                                                         e_h,
@@ -555,9 +605,6 @@ class BatchExportWorker(QThread):
                                                         linewidth=1.5,
                                                         linestyle="--",
                                                     )
-
-                                                    # Draw text vertically in the middle, using a white
-                                                    # background box so it doesn't blend with spectrogram
                                                     ax.text(
                                                         mid_h,
                                                         y_min + (y_max - y_min) * 0.5,
@@ -568,54 +615,69 @@ class BatchExportWorker(QThread):
                                                         color="#FF4444",
                                                         alpha=1.0,
                                                         fontweight="bold",
-                                                        bbox=dict(
-                                                            facecolor="white",
-                                                            alpha=0.7,
-                                                            edgecolor="none",
-                                                            boxstyle="round,pad=0.2",
-                                                        ),
+                                                        bbox={
+                                                            "facecolor": "white",
+                                                            "alpha": 0.7,
+                                                            "edgecolor": "none",
+                                                            "boxstyle": "round,pad=0.2",
+                                                        },
                                                     )
 
                                     if self.graphs_config.get("day_markers", False):
-                                        current_day = self.start_datetime.normalize() + pd.Timedelta(days=1)
-                                        pm6_end_dt = self.df_pm6["Datetime"].iloc[-1]
-                                        while current_day < pm6_end_dt:
-                                            sec_offset = (current_day - self.start_datetime).total_seconds()
-                                            index_offset = np.searchsorted(df_pm6_original_time, sec_offset)
-                                            if 0 <= index_offset < len(time_sec):
-                                                h_offset = time_sec[index_offset] / 3600.0
-                                                y_max = ax.get_ylim()[1]
-                                                ax.axvline(h_offset, color="black", linestyle=":", alpha=0.6)
-                                                ax.text(
-                                                    h_offset,
-                                                    y_max,
-                                                    current_day.strftime("%Y-%m-%d"),
-                                                    rotation=90,
-                                                    va="top",
-                                                    ha="right",
-                                                    color="black",
-                                                    alpha=0.9,
-                                                    fontweight="bold",
-                                                    bbox=dict(
-                                                        facecolor="white",
-                                                        alpha=0.7,
-                                                        edgecolor="none",
-                                                        boxstyle="round,pad=0.1",
-                                                    ),
-                                                )
-                                            current_day += pd.Timedelta(days=1)
+                                        start_ts = pd.Timestamp(self.start_datetime)
+                                        if isinstance(start_ts, pd.Timestamp):
+                                            current_day = start_ts.normalize() + pd.Timedelta(days=1)
+                                            pm6_end_dt = self.df_pm6["Datetime"].iloc[-1]
+                                            while current_day < pm6_end_dt:
+                                                sec_offset = (current_day - start_ts).total_seconds()
+                                                index_offset = int(np.searchsorted(df_pm6_original_time, sec_offset))
+                                                if 0 <= index_offset < len(time_sec):
+                                                    h_offset = time_sec[index_offset] / 3600.0
+                                                    y_max = ax.get_ylim()[1]
+                                                    ax.axvline(h_offset, color="black", linestyle=":", alpha=0.6)
+                                                    ax.text(
+                                                        h_offset,
+                                                        y_max,
+                                                        current_day.strftime("%Y-%m-%d"),
+                                                        rotation=90,
+                                                        va="top",
+                                                        ha="right",
+                                                        color="black",
+                                                        alpha=0.9,
+                                                        fontweight="bold",
+                                                        bbox={
+                                                            "facecolor": "white",
+                                                            "alpha": 0.7,
+                                                            "edgecolor": "none",
+                                                            "boxstyle": "round,pad=0.1",
+                                                        },
+                                                    )
+                                                current_day += pd.Timedelta(days=1)
 
                             axes[-1].set_xlabel("Time (hours from start)")
 
                             safe_target = target.replace("/", "-").replace(" ", "_")
                             fname = f"{date_str}_{safe_target}_{channel}_TimeDomain_{band_key}.png"
-                            out_path = os.path.join(self.output_dir, fname)
-                            fig.savefig(out_path, dpi=300, bbox_inches="tight")
+                            out_path = Path(self.output_dir) / fname
+                            fig.savefig(str(out_path), dpi=300, bbox_inches="tight")
                             saved_count += 1
 
                         tasks_done += 1
 
             if not self._is_cancelled:
+                # Automatically save processing_config.json and provenance_manifest.json
+                active_cfg = self.config or cfg.ProcessingConfig(sampling_rate=self.fs)
+                cfg_path = Path(self.output_dir) / "processing_config.json"
+                active_cfg.to_json(cfg_path)
+                saved_count += 1
+
+                from core.provenance import export_provenance_manifest
+
+                prov_path = Path(self.output_dir) / "provenance_manifest.json"
+                input_file = getattr(self.df_pm6, "attrs", {}).get("filepath", None)
+                export_provenance_manifest(prov_path, input_file_path=input_file, config=active_cfg)
+                saved_count += 1
+
                 self.progress.emit(100, "Done!")
                 self.finished_ok.emit(saved_count)
             else:
@@ -636,51 +698,52 @@ class BatchExportDialog(QDialog):
 
     def __init__(
         self,
-        df_pm6,
-        df_pm6_original,
-        sessions,
-        start_datetime,
-        fs,
-        window_size,
-        n_sigmas,
-        apply_smoothing,
-        parent=None,
-        config=None,
-    ):
+        df_pm6: pd.DataFrame,
+        df_pm6_original: pd.DataFrame,
+        sessions: list[dict[str, Any]],
+        start_datetime: pd.Timestamp | datetime,
+        fs: float,
+        window_size: int,
+        n_sigmas: float,
+        apply_smoothing: bool,
+        parent: QWidget | None = None,
+        config: cfg.ProcessingConfig | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Batch Export")
         self.resize(700, 750)
 
-        self.df_pm6 = df_pm6
-        self.df_pm6_original = df_pm6_original
-        self.sessions = sessions
-        self.start_datetime = start_datetime
-        self.fs = fs
-        self.window_size = window_size
-        self.n_sigmas = n_sigmas
-        self.apply_smoothing = apply_smoothing
-        self.config = config
+        self.df_pm6: pd.DataFrame = df_pm6
+        self.df_pm6_original: pd.DataFrame = df_pm6_original
+        self.start_datetime: pd.Timestamp | datetime = start_datetime
+        self.fs: float = fs
+        self.window_size: int = window_size
+        self.n_sigmas: float = n_sigmas
+        self.apply_smoothing: bool = apply_smoothing
+        self.config: cfg.ProcessingConfig | None = config
 
         # Add Full Overview pseudo-session
         max_end = len(df_pm6)
         full_session = {"start": 0, "end": max_end, "target": "Full Overview"}
-        self.sessions = [full_session] + sessions
+        self.sessions: list[dict[str, Any]] = [full_session, *sessions]
 
-        self.worker = None
+        self.worker: BatchExportWorker | None = None
+        self.output_dir: str = ""
         self.init_ui()
 
-    def init_ui(self):
+    def init_ui(self) -> None:
+        """Construct the batch dialog UI."""
         layout = QVBoxLayout(self)
 
         lists_layout = QHBoxLayout()
 
         # Sessions list
-        grp_sessions = QGroupBox("1. Select Sessions")
+        grp_sessions = QGroupBox("Select Sessions")
         v_sess = QVBoxLayout()
         self.list_sessions = QListWidget()
         self.list_sessions.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
 
-        self.session_map = {}
+        self.session_map: dict[str, dict[str, Any]] = {}
         for _idx, s in enumerate(self.sessions):
             session_dt = (
                 self.df_pm6["Datetime"].iloc[s["start"]] if s["start"] < len(self.df_pm6) else self.start_datetime
@@ -697,13 +760,15 @@ class BatchExportDialog(QDialog):
         lists_layout.addWidget(grp_sessions)
 
         # Channels list
-        grp_channels = QGroupBox("2. Select Channels")
+        grp_channels = QGroupBox("Select Channels")
         v_chan = QVBoxLayout()
         self.list_channels = QListWidget()
         self.list_channels.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         for ch in CHANNELS:
             self.list_channels.addItem(ch)
-        self.list_channels.item(0).setSelected(True)  # Select first by default
+        first_item = self.list_channels.item(0)
+        if first_item is not None:
+            first_item.setSelected(True)  # Select first by default
         v_chan.addWidget(self.list_channels)
         grp_channels.setLayout(v_chan)
         lists_layout.addWidget(grp_channels)
@@ -720,7 +785,7 @@ class BatchExportDialog(QDialog):
         layout.addLayout(h_band)
 
         # Plots to include
-        grp_plots = QGroupBox("3. Plots to Include")
+        grp_plots = QGroupBox("Plots to Include")
         v_plots = QVBoxLayout()
         h_plots1 = QHBoxLayout()
         self.chk_raw = QCheckBox("Raw Signal")
@@ -760,7 +825,7 @@ class BatchExportDialog(QDialog):
         layout.addWidget(grp_plots)
 
         # Output directory
-        grp_out = QGroupBox("4. Output Directory")
+        grp_out = QGroupBox("Output Directory")
         h_out = QHBoxLayout()
         self.lbl_outdir = QLabel("No directory selected")
         btn_browse = QPushButton("Browse...")
@@ -787,15 +852,15 @@ class BatchExportDialog(QDialog):
         layout.addWidget(self.progress)
         layout.addLayout(h_actions)
 
-        self.output_dir = ""
-
-    def browse_dir(self):
+    def browse_dir(self) -> None:
+        """Open directory chooser to set output export folder."""
         d = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if d:
             self.output_dir = d
             self.lbl_outdir.setText(d)
 
-    def close_or_cancel(self):
+    def close_or_cancel(self) -> None:
+        """Cancel worker if executing and dismiss dialog."""
         if self.worker and self.worker.isRunning():
             try:
                 self.worker.finished_ok.disconnect()
@@ -809,7 +874,8 @@ class BatchExportDialog(QDialog):
         else:
             self.reject()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Handle window close events by terminating the background worker thread."""
         if self.worker and self.worker.isRunning():
             try:
                 self.worker.finished_ok.disconnect()
@@ -821,7 +887,8 @@ class BatchExportDialog(QDialog):
             self.worker.finished.connect(self.worker.deleteLater)
         super().closeEvent(event)
 
-    def start_export(self):
+    def start_export(self) -> None:
+        """Validate input choices and start background BatchExportWorker thread."""
         if not self.output_dir:
             QMessageBox.warning(self, "Error", "Please select an output directory.")
             return
@@ -877,11 +944,13 @@ class BatchExportDialog(QDialog):
         self.worker.error.connect(self.on_error)
         self.worker.start()
 
-    def update_progress(self, val, text):
+    def update_progress(self, val: int, text: str) -> None:
+        """Update progress bar percentage and status label."""
         self.progress.setValue(val)
         self.lbl_status.setText(text)
 
-    def on_finished(self, saved_count):
+    def on_finished(self, saved_count: int) -> None:
+        """Handle worker completion signal."""
         self.progress.setValue(100)
         self.lbl_status.setText("Export complete.")
         QMessageBox.information(self, "Success", f"Batch export finished.\nSaved {saved_count} files.")
@@ -889,7 +958,8 @@ class BatchExportDialog(QDialog):
         self.btn_cancel.setText("Close")
         self.btn_cancel.setEnabled(True)
 
-    def on_error(self, err_msg):
+    def on_error(self, err_msg: str) -> None:
+        """Handle worker error/cancellation signal."""
         self.lbl_status.setText("Error/Cancelled.")
         QMessageBox.warning(self, "Export Halted", err_msg)
         self.btn_export.setEnabled(True)

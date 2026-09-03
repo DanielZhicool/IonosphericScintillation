@@ -1,5 +1,10 @@
+"""Settings and parameter configuration dialog."""
+
+from __future__ import annotations
+
 import json
 import os
+from typing import Any
 
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
@@ -25,7 +30,7 @@ import core.config as cfg
 # ---------------------------------------------------------------------------
 # Built-in presets
 # ---------------------------------------------------------------------------
-_BUILTIN_PRESETS = {
+_BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
     "Default": {
         "CWT_NV_BUBBLES": 32,
         "CWT_NV_CLOUDS": 64,
@@ -75,11 +80,13 @@ _BUILTIN_PRESETS = {
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None, current_config: cfg.ProcessingConfig | None = None):
+    def __init__(self, parent: QWidget | None = None, current_config: cfg.ProcessingConfig | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(430, 680)
-        self.current_config = current_config if current_config is not None else cfg.ProcessingConfig()
+        self.current_config: cfg.ProcessingConfig = (
+            current_config if current_config is not None else cfg.ProcessingConfig()
+        )
         layout = QVBoxLayout(self)
 
         # --- Preset bar ---
@@ -124,7 +131,7 @@ class SettingsDialog(QDialog):
         content = QWidget()
         self.form_layout = QFormLayout(content)
 
-        self.inputs = {}
+        self.inputs: dict[str, QSpinBox | QDoubleSpinBox] = {}
 
         conf = self.current_config
         # CWT Params
@@ -173,7 +180,7 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def add_spinbox(self, label, name, current_val, min_val, max_val, step):
+    def add_spinbox(self, label: str, name: str, current_val: int, min_val: int, max_val: int, step: int) -> None:
         sb = QSpinBox()
         sb.setRange(min_val, max_val)
         sb.setValue(int(current_val))
@@ -182,7 +189,9 @@ class SettingsDialog(QDialog):
         self.form_layout.addRow(label, sb)
         self.inputs[name] = sb
 
-    def add_double_spinbox(self, label, name, current_val, min_val, max_val, step):
+    def add_double_spinbox(
+        self, label: str, name: str, current_val: float, min_val: float, max_val: float, step: float
+    ) -> None:
         sb = QDoubleSpinBox()
         sb.setRange(min_val, max_val)
         sb.setValue(float(current_val))
@@ -192,30 +201,35 @@ class SettingsDialog(QDialog):
         self.form_layout.addRow(label, sb)
         self.inputs[name] = sb
 
-    def _current_values(self) -> dict:
+    def _current_values(self) -> dict[str, Any]:
         """Return current form values as a plain dict."""
         return {name: widget.value() for name, widget in self.inputs.items()}
 
-    def _apply_values(self, values: dict):
-        """Populate form widgets from a dict (ignores unknown keys)."""
-        # Block signals globally so setting values doesn't trigger _on_field_edited
+    def _apply_values(self, values: dict[str, Any]) -> None:
+        """Populate form widgets from a dict (supports lowercase dataclass keys, uppercase presets, and nested provenance)."""
+        if "config" in values and isinstance(values["config"], dict):
+            values = values["config"]
+        upper_values = {k.upper(): v for k, v in values.items()}
+
         for widget in self.inputs.values():
             widget.blockSignals(True)
 
-        for name, val in values.items():
-            if name in self.inputs:
-                self.inputs[name].setValue(val)
+        for name, widget in self.inputs.items():
+            if name in upper_values:
+                widget.setValue(upper_values[name])
 
         for widget in self.inputs.values():
             widget.blockSignals(False)
 
-    def _on_field_edited(self):
+        self._match_current_config_to_preset()
+
+    def _on_field_edited(self) -> None:
         """When a user manually edits a field, switch dropdown to Custom."""
         self.combo_preset.blockSignals(True)
         self.combo_preset.setCurrentText("Custom")
         self.combo_preset.blockSignals(False)
 
-    def _match_current_config_to_preset(self):
+    def _match_current_config_to_preset(self) -> None:
         """Check if current form values exactly match any preset, and update the dropdown."""
         current_vals = self._current_values()
         for preset_name, preset_vals in _BUILTIN_PRESETS.items():
@@ -238,28 +252,27 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     # Preset actions
     # ------------------------------------------------------------------
-    def _load_preset(self):
+    def _load_preset(self) -> None:
         preset_name = self.combo_preset.currentText()
         if preset_name in _BUILTIN_PRESETS:
             self._apply_values(_BUILTIN_PRESETS[preset_name])
 
-    def _save_to_file(self):
+    def _save_to_file(self) -> None:
         filepath, _ = QFileDialog.getSaveFileName(
             self, "Save Preset", os.path.expanduser("~/preset.json"), "JSON Files (*.json)"
         )
         if filepath:
             try:
-                with open(filepath, "w") as f:
-                    json.dump(self._current_values(), f, indent=2)
+                self.get_config().to_json(filepath)
                 QMessageBox.information(self, "Preset Saved", f"Preset saved to:\n{filepath}")
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", str(e))
 
-    def _load_from_file(self):
+    def _load_from_file(self) -> None:
         filepath, _ = QFileDialog.getOpenFileName(self, "Load Preset", os.path.expanduser("~"), "JSON Files (*.json)")
         if filepath:
             try:
-                with open(filepath) as f:
+                with open(filepath, encoding="utf-8") as f:
                     values = json.load(f)
                 self._apply_values(values)
             except Exception as e:
@@ -299,5 +312,5 @@ class SettingsDialog(QDialog):
             compute_jackknife_ci=self.current_config.compute_jackknife_ci,
         )
 
-    def apply_settings(self):
+    def apply_settings(self) -> None:
         self.accept()
