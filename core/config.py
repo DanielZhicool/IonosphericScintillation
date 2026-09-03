@@ -3,7 +3,12 @@ Core configuration constants and ProcessingConfig container.
 Centralize tunable parameters here for easier experimentation, testing, and documentation.
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
+from typing import Any
 
 # Session parsing
 GAP_THRESHOLD = 3600  # seconds
@@ -77,3 +82,32 @@ class ProcessingConfig:
     cwt_dynamic_range_db: float = CWT_DYNAMIC_RANGE_DB
     cwt_show_period: bool = CWT_SHOW_PERIOD
     cwt_show_linear_amp: bool = CWT_SHOW_LINEAR_AMP
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert config fields to a plain dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ProcessingConfig:
+        """Instantiate ProcessingConfig from dictionary, supporting uppercase presets and provenance unwrapping."""
+        if "config" in data and isinstance(data["config"], dict):
+            data = data["config"]
+        normalized = {k.lower(): v for k, v in data.items()}
+        valid_keys = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in normalized.items() if k in valid_keys}
+        return cls(**filtered)
+
+    def to_json(self, path_or_buf: str | Path | None = None, indent: int = 2) -> str:
+        """Serialize configuration to JSON string or file."""
+        serialized = json.dumps(self.to_dict(), indent=indent)
+        if path_or_buf is not None:
+            Path(path_or_buf).write_text(serialized, encoding="utf-8")
+        return serialized
+
+    @classmethod
+    def from_json(cls, path_or_str: str | Path) -> ProcessingConfig:
+        """Deserialize configuration from JSON file path or string."""
+        path = Path(path_or_str)
+        content = path.read_text(encoding="utf-8") if path.exists() and path.is_file() else str(path_or_str)
+        data = json.loads(content)
+        return cls.from_dict(data)

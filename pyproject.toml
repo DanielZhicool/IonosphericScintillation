@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-uran4 = "app:main"
+uran4 = "gui.main_window:main"
 
 [dependency-groups]
 dev = [
@@ -27,6 +27,7 @@ dev = [
     "pyinstaller>=6.21.0",
     "pytest>=8.3.4",
     "pytest-benchmark>=5.2.3",
+    "pytest-qt>=4.4.0",
     "ruff>=0.9.6",
 ]
 

@@ -98,12 +98,18 @@ def generate_provenance_manifest(
     file_meta: dict[str, Any] = {}
     if input_file_path is not None:
         p = Path(input_file_path)
-        if p.exists():
+        if p.is_file():
             file_meta = {
                 "path": str(p.resolve()),
                 "filename": p.name,
                 "size_bytes": p.stat().st_size,
                 "sha256": compute_sha256(p),
+            }
+        elif p.is_dir():
+            file_meta = {
+                "path": str(p.resolve()),
+                "filename": p.name,
+                "is_directory": True,
             }
         else:
             file_meta = {"path": str(input_file_path), "status": "file_not_found"}

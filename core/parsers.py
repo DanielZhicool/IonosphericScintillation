@@ -277,3 +277,30 @@ def build_observation_sessions(df_logs: pd.DataFrame, pm6_max_sec: float) -> tup
         sessions.append({"target": current_target, "start": current_start, "end": current_end})
 
     return df_logs, calibrations, sessions
+
+
+def extract_pm_signals(df: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Extract baseline differential (P-M) signals for dual-frequency polarization channels."""
+    signals: dict[str, np.ndarray] = {}
+    if "P1_20A" in df.columns and "M1_20A" in df.columns:
+        signals["20 MHz Pol A"] = np.asarray(df["P1_20A"].to_numpy() - df["M1_20A"].to_numpy(), dtype=float)
+    elif "Ch1_Volt" in df.columns:
+        signals["20 MHz Pol A"] = np.asarray(df["Ch1_Volt"].to_numpy(), dtype=float)
+
+    if "P2_20B" in df.columns and "M2_20B" in df.columns:
+        signals["20 MHz Pol B"] = np.asarray(df["P2_20B"].to_numpy() - df["M2_20B"].to_numpy(), dtype=float)
+    elif "Ch2_Volt" in df.columns:
+        signals["20 MHz Pol B"] = np.asarray(df["Ch2_Volt"].to_numpy(), dtype=float)
+
+    if "P3_25A" in df.columns and "M3_25A" in df.columns:
+        signals["25 MHz Pol A"] = np.asarray(df["P3_25A"].to_numpy() - df["M3_25A"].to_numpy(), dtype=float)
+    elif "Ch1_Volt" in df.columns:
+        signals["25 MHz Pol A"] = np.asarray(df["Ch1_Volt"].to_numpy(), dtype=float)
+
+    if "P4_25B" in df.columns and "M4_25B" in df.columns:
+        signals["25 MHz Pol B"] = np.asarray(df["P4_25B"].to_numpy() - df["M4_25B"].to_numpy(), dtype=float)
+    elif "Ch2_Volt" in df.columns:
+        signals["25 MHz Pol B"] = np.asarray(df["Ch2_Volt"].to_numpy(), dtype=float)
+
+    return signals
+

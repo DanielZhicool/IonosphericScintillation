@@ -35,7 +35,9 @@ jobs:
         run: uv run ruff check
 
       - name: Run MyPy Type Check
-        run: uv run mypy core
+        run: uv run mypy core gui app.py
 
       - name: Run Pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: uv run pytest
