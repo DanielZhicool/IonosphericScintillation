@@ -1204,8 +1204,8 @@ class Uran4App(QMainWindow):
 def main() -> None:
     """Desktop application entrypoint."""
     import sys
+
     app = QApplication(sys.argv)
     window = Uran4App()
     window.show()
     sys.exit(app.exec())
-

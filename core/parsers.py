@@ -303,4 +303,3 @@ def extract_pm_signals(df: pd.DataFrame) -> dict[str, np.ndarray]:
         signals["25 MHz Pol B"] = np.asarray(df["Ch2_Volt"].to_numpy(), dtype=float)
 
     return signals
-

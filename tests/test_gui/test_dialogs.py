@@ -86,4 +86,3 @@ def test_settings_dialog_load_config_and_provenance(qtbot: QtBot) -> None:
     conf2 = dialog.get_config()
     assert conf2.cwt_nv_bubbles == 16
     assert conf2.mtm_n_tapers == 5
-
